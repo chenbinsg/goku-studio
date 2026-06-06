@@ -1,0 +1,128 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.ant-layout {
+  min-height: 100vh;
+}
+
+.ant-layout-sider {
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+}
+
+.ant-layout-header {
+  background: #fff;
+  padding: 0 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* .logo replaced by AiosLogo React component */
+
+.content-wrapper {
+  padding: 24px;
+  min-height: 280px;
+}
+
+.page-header {
+  margin-bottom: 24px;
+}
+
+.stat-card {
+  border-radius: 8px;
+}
+
+.stat-card .ant-statistic-title {
+  color: #8c8c8c;
+  font-size: 14px;
+}
+
+.stat-card .ant-statistic-content {
+  color: #262626;
+  font-size: 32px;
+  font-weight: 600;
+}
+
+.chart-container {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.table-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.status-tag {
+  min-width: 60px;
+  text-align: center;
+}
+
+.search-form {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+  margin-bottom: 24px;
+}
+
+.data-table {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+}
+
+.detail-card {
+  margin-bottom: 24px;
+}
+
+.timeline-wrapper {
+  background: #fff;
+  padding: 24px;
+  border-radius: 8px;
+}
+
+.log-viewer {
+  background: #1e1e1e;
+  color: #d4d4d4;
+  padding: 16px;
+  border-radius: 8px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.code-block {
+  background: #f6f8fa;
+  padding: 16px;
+  border-radius: 6px;
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 13px;
+  overflow-x: auto;
+}
+
+.permission-l0 { color: #52c41a; }
+.permission-l1 { color: #1890ff; }
+.permission-l2 { color: #faad14; }
+.permission-l3 { color: #f5222d; }
+
+.risk-low { color: #52c41a; }
+.risk-medium { color: #faad14; }
+.risk-high { color: #f5222d; }
