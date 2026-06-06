@@ -1,0 +1,81 @@
+name: goku-studio CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  # Fake URL — models import without a real DB connection
+  DATABASE_URL: mysql+pymysql://ci:ci@localhost:3306/goku_studio_ci
+  SECRET_KEY: ci-secret-key-thisisthirtytwochars00
+
+jobs:
+  # ── Boundary & unit tests ──────────────────────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install goku-shared (local editable)
+        run: pip install -e ../../packages/goku-shared
+        working-directory: backend
+        # In CI the monorepo won't be present; install from the repo root
+        # which includes packages/goku-shared as a submodule or subdirectory.
+        # If goku-shared is published to PyPI, replace with:
+        #   pip install goku-shared==0.1.0
+
+      - name: Install Studio deps
+        run: pip install -r requirements.txt
+        working-directory: backend
+
+      - name: Run boundary tests
+        run: pytest tests/ -v --tb=short
+        working-directory: backend
+
+  # ── Ruff lint ─────────────────────────────────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Lint
+        run: ruff check app/ --select E,F,W --ignore E501
+        working-directory: backend
+
+  # ── Architecture boundary gate ────────────────────────────────────────────
+  boundary:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install goku-shared + deps
+        run: |
+          pip install -e ../../packages/goku-shared || pip install goku-shared
+          pip install -r requirements.txt
+        working-directory: backend
+
+      - name: Studio boundary test (no Core runtime imports)
+        run: pytest tests/test_studio_boundary.py::test_studio_routers_do_not_import_core_runtime -v
+        working-directory: backend
