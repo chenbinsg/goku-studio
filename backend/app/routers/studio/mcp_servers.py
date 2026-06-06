@@ -1,0 +1,748 @@
+"""MCP server admin API: list / stats / detail / CRUD / enable / disable.
+
+Thin HTTP layer over :mod:`app.services.mcp_servers`. Owns no business
+logic — the service module enforces soft-delete filtering, encrypts
+secrets, runs reference checks, and writes audit log entries.
+
+Routes live under ``/api/v1/mcp-servers`` (hyphenated). MCP server
+configuration is DB-backed; the old file-backed management API has
+been retired.
+
+Permissions
+  - Read endpoints: ``mcp_servers.read``
+  - Write endpoints: ``mcp_servers.write``
+  Superusers bypass via :func:`auth.require_permission` (existing
+  behavior in app/auth.py).
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy.orm import Session
+
+from app import auth, models
+from app.db import get_db
+from app.schemas import (
+    MCPAuthorizationCreate,
+    MCPAuthorizationItem,
+    MCPAuthorizedPrincipalListResponse,
+    MCPAuthorizationSummaryResponse,
+    MCPAuthorizationUpdate,
+    MCPCallLogListResponse,
+    MCPCapabilityDetail,
+    MCPCapabilityInvokeRequest,
+    MCPCapabilityInvokeResponse,
+    MCPCapabilityListResponse,
+    MCPCapabilityAuthorizationModeUpdate,
+    MCPCapabilityAuthorizationModeView,
+    MCPCapabilityBlacklistCreate,
+    MCPCapabilityBlacklistItem,
+    MCPCapabilityBlacklistListResponse,
+    MCPCapabilityQuotaConfig,
+    MCPCapabilityQuotaUpdate,
+    MCPChangeLogListResponse,
+    MCPConnectionTestResult,
+    MCPHealthRecordListResponse,
+    MCPPromptListResponse,
+    MCPResourceListResponse,
+    MCPServerCreate,
+    MCPServerDetail,
+    MCPServerHealthState,
+    MCPServerListResponse,
+    MCPServerStats,
+    MCPServerUpdate,
+    MCPSyncBucketCounts,
+    MCPSyncResult,
+)
+from datetime import datetime
+from app.services import mcp_authorizations as authz
+from app.services import mcp_capabilities as caps
+from app.services import mcp_observability as observe
+from app.services import mcp_runtime
+from app.services import mcp_servers as svc
+
+
+router = APIRouter(prefix="/api/v1/mcp-servers", tags=["mcp-servers"])
+
+
+@router.get("/stats", response_model=MCPServerStats)
+def get_mcp_servers_stats(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPServerStats:
+    """Header counts for the admin list page."""
+    return svc.get_stats(db)
+
+
+@router.get("", response_model=MCPServerListResponse)
+def list_mcp_servers(
+    keyword: Optional[str] = Query(None, max_length=200, description="Name or code substring"),
+    serviceCategory: Optional[str] = Query(None, alias="serviceCategory"),
+    status: Optional[str] = Query(None, description="enabled | disabled"),
+    healthStatus: Optional[str] = Query(None, alias="healthStatus", description="healthy | unhealthy | unchecked"),
+    page: int = Query(1, ge=1),
+    size: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPServerListResponse:
+    """Paginated list with optional keyword / category / status / health filters.
+
+    Query-param names match the frontend convention (camelCase for the
+    multi-word filters, plain for ``page`` / ``size`` / ``keyword``).
+    """
+    total, items = svc.list_servers(
+        db,
+        keyword=keyword,
+        service_category=serviceCategory,
+        status_filter=status,
+        health_status=healthStatus,
+        page=page,
+        size=size,
+    )
+    return MCPServerListResponse(total=total, items=items)
+
+
+@router.get("/{server_id}", response_model=MCPServerDetail)
+def get_mcp_server(
+    server_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPServerDetail:
+    """Full detail (config + masked secrets view). 404 if soft-deleted
+    or absent.
+    """
+    return svc.get_detail(db, server_id)
+
+
+@router.post("", response_model=MCPServerDetail, status_code=201)
+def create_mcp_server(
+    payload: MCPServerCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPServerDetail:
+    """Create a server. Code uniqueness is enforced including
+    soft-deleted rows (no reuse of historical codes).
+    """
+    server = svc.create_server(
+        db, payload, user_id=current_user.id, request=request,
+    )
+    return svc.to_detail(server)
+
+
+@router.put("/{server_id}", response_model=MCPServerDetail)
+def update_mcp_server(
+    server_id: str,
+    payload: MCPServerUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPServerDetail:
+    """Partial update. Unset fields keep their stored value; secret
+    fields whose value still looks like the mask sentinel from a
+    previous GET are also treated as "unchanged".
+    """
+    server = svc.update_server(
+        db, server_id, payload, user_id=current_user.id, request=request,
+    )
+    return svc.to_detail(server)
+
+
+@router.delete("/{server_id}", status_code=204)
+def delete_mcp_server(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+):
+    """Soft-delete. Refuses on:
+      - status == ``enabled`` → disable first
+      - active dependents (tools / resources / prompts / permissions)
+
+    Call logs are preserved by design — the soft-delete leaves the
+    parent row in the DB so the FK keeps resolving.
+    """
+    svc.soft_delete_server(db, server_id, user_id=current_user.id, request=request)
+    return None
+
+
+@router.post("/{server_id}/enable", response_model=MCPServerDetail)
+def enable_mcp_server(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPServerDetail:
+    server = svc.enable_server(db, server_id, user_id=current_user.id, request=request)
+    return svc.to_detail(server)
+
+
+@router.post("/{server_id}/test", response_model=MCPConnectionTestResult)
+async def test_mcp_server_connection(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPConnectionTestResult:
+    """Run a one-off connection probe.
+
+    The probe is independent of the live runtime pool — works on
+    disabled servers too, and doesn't disturb existing connections.
+    Side effects:
+      - append one row to ``mcp_health_records``
+      - mirror status / last_checked_at / last_response_time onto
+        the ``mcp_servers`` row
+      - write an ``mcp_server.connection_test`` audit-log entry
+    """
+    server = svc._get_by_id_strict(db, server_id)
+    config = mcp_runtime.build_runtime_config(server, db)
+    result = await mcp_runtime.probe_connection(config, timeout=server.timeout_seconds)
+    record = mcp_runtime.record_health_probe(db, server, result)
+
+    # Audit log (non-blocking — failure here doesn't change the result).
+    svc._log_audit(
+        db,
+        user_id=current_user.id,
+        action="mcp_server.connection_test",
+        server=server,
+        request=request,
+        details={
+            "status": result.status,
+            "response_time_ms": result.response_time_ms,
+            "capabilities_discovered": result.capabilities_discovered,
+            "error_type": result.error_type,
+            # error_message intentionally NOT in audit details to keep
+            # the audit row small and bounded — full message is in
+            # mcp_health_records.error_message for ops debugging.
+        },
+    )
+
+    return MCPConnectionTestResult(
+        server_id=server.id,
+        status=result.status,
+        response_time_ms=result.response_time_ms,
+        capabilities_discovered=result.capabilities_discovered,
+        error_type=result.error_type,
+        error_message=result.error_message,
+        checked_at=record.checked_at,
+    )
+
+
+@router.post("/{server_id}/sync", response_model=MCPSyncResult)
+async def sync_mcp_server_capabilities(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPSyncResult:
+    """Sync Tools / Resources / Prompts from the server into the DB.
+
+    For each capability:
+      - added:   in upstream, not in DB
+      - updated: in both, content changed
+      - synced:  in both, no change
+      - removed: in DB, not in upstream → soft-deleted (kept around so
+                 historical call logs still resolve names)
+
+    Each capability is enumerated independently — one failing won't
+    poison the others. Aggregate status (``mcp_servers.last_sync_status``)
+    is success / partial_success / failed. Writes an
+    ``mcp_server.capability_sync`` audit-log entry with the counts.
+    """
+    server = svc._get_by_id_strict(db, server_id)
+    result = await mcp_runtime.sync_capabilities(db, server, timeout=server.timeout_seconds)
+
+    def _to_schema(c) -> MCPSyncBucketCounts:
+        return MCPSyncBucketCounts(
+            kind=c.kind, ok=c.ok, error=c.error,
+            added=c.added, updated=c.updated, synced=c.synced, removed=c.removed,
+        )
+
+    def _counts(c) -> dict:
+        return {
+            "ok": c.ok, "added": c.added, "updated": c.updated,
+            "synced": c.synced, "removed": c.removed,
+        }
+
+    svc._log_audit(
+        db,
+        user_id=current_user.id,
+        action="mcp_server.capability_sync",
+        server=server,
+        request=request,
+        details={
+            "status": result.status,
+            "capabilities": _counts(result.capabilities),
+            "resources": _counts(result.resources),
+            "prompts": _counts(result.prompts),
+            "error_type": result.error_type,
+        },
+    )
+
+    return MCPSyncResult(
+        server_id=server.id,
+        status=result.status,
+        capabilities=_to_schema(result.capabilities),
+        resources=_to_schema(result.resources),
+        prompts=_to_schema(result.prompts),
+        synced_at=result.synced_at,
+        error_type=result.error_type,
+        error_message=result.error_message,
+    )
+
+
+@router.post("/{server_id}/disable", response_model=MCPServerDetail)
+def disable_mcp_server(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPServerDetail:
+    server = svc.disable_server(db, server_id, user_id=current_user.id, request=request)
+    return svc.to_detail(server)
+
+
+# ─── MCP Capabilities (and Resources / Prompts) ───────────────────────
+#
+# "Capability" = the executable endpoint an MCP server exposes (what
+# the MCP protocol calls a "tool"). Goku reserves "Tool" for entries
+# in its separate AI Tool registry under "AI 能力 > 工具管理".
+
+@router.get("/{server_id}/capabilities", response_model=MCPCapabilityListResponse)
+def list_mcp_server_capabilities(
+    server_id: str,
+    keyword: Optional[str] = Query(None, max_length=200),
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPCapabilityListResponse:
+    """Currently-exposed MCP capabilities for this server.
+
+    Populated by ``POST /sync`` from the upstream server. Rows whose
+    ``status='inactive'`` are filtered out so the list reflects the
+    server's current surface area, not its full history.
+    """
+    total, items = caps.list_capabilities(
+        db, server_id, keyword=keyword, page=page, size=size,
+    )
+    return MCPCapabilityListResponse(total=total, items=items)
+
+
+@router.get(
+    "/{server_id}/capabilities/{capability_id}",
+    response_model=MCPCapabilityDetail,
+)
+def get_mcp_server_capability(
+    server_id: str,
+    capability_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPCapabilityDetail:
+    return caps.get_capability_detail(db, server_id, capability_id)
+
+
+@router.post(
+    "/{server_id}/capabilities/{capability_id}/test-invoke",
+    response_model=MCPCapabilityInvokeResponse,
+)
+def test_invoke_mcp_server_capability(
+    server_id: str,
+    capability_id: str,
+    payload: MCPCapabilityInvokeRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPCapabilityInvokeResponse:
+    """Invoke a capability live via the runtime pool. Writes a sanitized
+    row into ``mcp_call_logs`` with ``invoke_type='mcp_test'``.
+
+    Server must be ``status='enabled'`` and capability must be
+    ``status='active'`` — both gated as 400 / 404 if violated.
+
+    Sanitization rules (call log only — the live call sees raw args):
+      - Argument keys matching KEY/TOKEN/SECRET/PASSWORD substrings
+        get their value replaced with ``[REDACTED]``.
+      - String values longer than 200 chars get truncated.
+      - Full response body is NEVER stored; only a 500-char preview
+        lands in ``output_summary`` and the HTTP response.
+    """
+    call_log, response = caps.invoke_capability(
+        db, server_id, capability_id, payload.arguments,
+        user_id=current_user.id, request=request,
+    )
+
+    return MCPCapabilityInvokeResponse(
+        call_log_id=call_log.id,
+        result=call_log.result,
+        response_time_ms=call_log.response_time,
+        output_summary=call_log.output_summary,
+        error_type=call_log.error_type,
+        error_message=call_log.error_message,
+    )
+
+
+@router.get("/{server_id}/resources", response_model=MCPResourceListResponse)
+def list_mcp_server_resources(
+    server_id: str,
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPResourceListResponse:
+    total, items = caps.list_resources(db, server_id, page=page, size=size)
+    return MCPResourceListResponse(total=total, items=items)
+
+
+@router.get("/{server_id}/prompts", response_model=MCPPromptListResponse)
+def list_mcp_server_prompts(
+    server_id: str,
+    page: int = Query(1, ge=1),
+    size: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPPromptListResponse:
+    total, items = caps.list_prompts(db, server_id, page=page, size=size)
+    return MCPPromptListResponse(total=total, items=items)
+
+
+# ─── Capability total-quota settings ──────────────────────────────────
+
+@router.patch(
+    "/{server_id}/capabilities/{capability_id}/quota",
+    response_model=MCPCapabilityQuotaConfig,
+)
+def update_mcp_capability_quota(
+    server_id: str,
+    capability_id: str,
+    payload: MCPCapabilityQuotaUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPCapabilityQuotaConfig:
+    """Set / clear a capability's TOTAL quota.
+
+    Returns the updated quota view (freshly-recomputed
+    ``authorized_quota_sum`` + ``remaining_authorizable_quota`` from
+    current enabled authorizations). Writes
+    ``mcp_capability.quota_update`` to ``audit_logs``.
+    """
+    return authz.update_capability_quota(
+        db, server_id, capability_id, payload,
+        user_id=current_user.id, request=request,
+    )
+
+
+# ─── Capability authorization mode + blacklist ────────────────────────
+
+@router.patch(
+    "/{server_id}/capabilities/{capability_id}/authorization-mode",
+    response_model=MCPCapabilityAuthorizationModeView,
+)
+def update_capability_authorization_mode(
+    server_id: str,
+    capability_id: str,
+    payload: MCPCapabilityAuthorizationModeUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPCapabilityAuthorizationModeView:
+    """Switch a capability between 'required' (default-deny) and 'public'
+    (allow-all + optional blacklist)."""
+    return MCPCapabilityAuthorizationModeView(
+        **authz.update_capability_authorization_mode(
+            db, server_id, capability_id, payload.mode,
+            user_id=current_user.id, request=request,
+        )
+    )
+
+
+@router.get(
+    "/{server_id}/capabilities/{capability_id}/blacklist",
+    response_model=MCPCapabilityBlacklistListResponse,
+)
+def list_capability_blacklist(
+    server_id: str,
+    capability_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPCapabilityBlacklistListResponse:
+    """List a capability's blacklist (active in 'public' mode only)."""
+    total, items = authz.list_capability_blacklist(db, server_id, capability_id)
+    return MCPCapabilityBlacklistListResponse(
+        total=total,
+        items=[MCPCapabilityBlacklistItem(**it) for it in items],
+    )
+
+
+@router.post(
+    "/{server_id}/capabilities/{capability_id}/blacklist",
+    response_model=MCPCapabilityBlacklistItem,
+    status_code=201,
+)
+def add_capability_blacklist(
+    server_id: str,
+    capability_id: str,
+    payload: MCPCapabilityBlacklistCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPCapabilityBlacklistItem:
+    """Add a Principal to a capability's blacklist (denied in 'public' mode)."""
+    row = authz.add_capability_blacklist(
+        db, server_id, capability_id,
+        payload.principal_type, payload.principal_id, payload.reason,
+        user_id=current_user.id, request=request,
+    )
+    return MCPCapabilityBlacklistItem(**row)
+
+
+@router.delete(
+    "/{server_id}/capabilities/{capability_id}/blacklist/{blacklist_id}",
+    status_code=204,
+)
+def remove_capability_blacklist(
+    server_id: str,
+    capability_id: str,
+    blacklist_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+):
+    """Remove a Principal from a capability's blacklist."""
+    authz.remove_capability_blacklist(
+        db, server_id, capability_id, blacklist_id,
+        user_id=current_user.id, request=request,
+    )
+
+
+# ─── MCP Capability ↔ AI Tool authorizations ──────────────────────────
+
+@router.get(
+    "/{server_id}/authorization-summary",
+    response_model=MCPAuthorizationSummaryResponse,
+)
+def get_authorization_summary(
+    server_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPAuthorizationSummaryResponse:
+    """Per-capability quota + authorization rollup (spec §10.1):
+    total limit, used, authorized_quota_sum, remaining_authorizable_quota,
+    authorized_principal_count."""
+    return authz.get_authorization_summary(db, server_id)
+
+
+@router.get(
+    "/{server_id}/authorized-principals",
+    response_model=MCPAuthorizedPrincipalListResponse,
+)
+def list_authorized_principals(
+    server_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPAuthorizedPrincipalListResponse:
+    """All authorizations under this MCP server (spec §10.2)."""
+    total, items = authz.list_authorized_principals(db, server_id)
+    return MCPAuthorizedPrincipalListResponse(total=total, items=items)
+
+
+@router.post(
+    "/{server_id}/authorized-principals",
+    response_model=MCPAuthorizationItem,
+    status_code=201,
+)
+def create_authorized_principal(
+    server_id: str,
+    payload: MCPAuthorizationCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPAuthorizationItem:
+    """Grant a Principal (AI Tool / Agent / workflow / system_job) the
+    right to call an MCP capability (spec §8.4):
+
+      - Principal + capability exist; capability belongs to this server
+      - no existing non-deleted authorization for (principal, capability)
+      - allocated_quota fits remaining_authorizable_quota
+      - quota_period matches the capability's period
+    """
+    return authz.create_authorization(
+        db, server_id, payload, user_id=current_user.id, request=request,
+    )
+
+
+@router.patch(
+    "/{server_id}/authorized-principals/{authorization_id}",
+    response_model=MCPAuthorizationItem,
+)
+def update_authorized_principal(
+    server_id: str,
+    authorization_id: str,
+    payload: MCPAuthorizationUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPAuthorizationItem:
+    """Edit an authorization (spec §9). allocated_quota is validated with
+    THIS authorization's own slice excluded from the sum."""
+    return authz.update_authorization(
+        db, server_id, authorization_id, payload,
+        user_id=current_user.id, request=request,
+    )
+
+
+@router.post(
+    "/{server_id}/authorized-principals/{authorization_id}/enable",
+    response_model=MCPAuthorizationItem,
+)
+def enable_authorized_principal(
+    server_id: str,
+    authorization_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPAuthorizationItem:
+    """Enable an authorization (spec §10.5)."""
+    return authz.set_authorization_enabled(
+        db, server_id, authorization_id, True,
+        user_id=current_user.id, request=request,
+    )
+
+
+@router.post(
+    "/{server_id}/authorized-principals/{authorization_id}/disable",
+    response_model=MCPAuthorizationItem,
+)
+def disable_authorized_principal(
+    server_id: str,
+    authorization_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPAuthorizationItem:
+    """Disable an authorization (spec §10.6)."""
+    return authz.set_authorization_enabled(
+        db, server_id, authorization_id, False,
+        user_id=current_user.id, request=request,
+    )
+
+
+@router.delete(
+    "/{server_id}/authorized-principals/{authorization_id}",
+    status_code=204,
+)
+def delete_authorized_principal(
+    server_id: str,
+    authorization_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+):
+    """Soft-delete an authorization (spec §10.7). The Principal can no
+    longer call the capability; call-log history still resolves."""
+    authz.delete_authorization(
+        db, server_id, authorization_id,
+        user_id=current_user.id, request=request,
+    )
+    return None
+
+
+# ─── Task 4: read-only observability ──────────────────────────────────
+
+
+@router.get("/{server_id}/health", response_model=MCPServerHealthState)
+def get_mcp_server_health(
+    server_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPServerHealthState:
+    """Current health snapshot for the detail page header.
+
+    Combines the cheap mirrored columns on ``mcp_servers`` with
+    ``consecutive_failures`` and ``last_recovered_at`` derived from a
+    short scan of recent ``mcp_health_records``.
+    """
+    return observe.get_health_state(db, server_id)
+
+
+@router.get(
+    "/{server_id}/health-records",
+    response_model=MCPHealthRecordListResponse,
+)
+def list_mcp_server_health_records(
+    server_id: str,
+    status: Optional[str] = Query(None, description="normal | abnormal"),
+    start: Optional[datetime] = Query(None, description="inclusive lower bound on checked_at"),
+    end: Optional[datetime] = Query(None, description="inclusive upper bound on checked_at"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPHealthRecordListResponse:
+    """Paginated probe history. Newest-first by ``checked_at``."""
+    total, items = observe.list_health_records(
+        db, server_id,
+        status=status, start=start, end=end,
+        offset=offset, limit=limit,
+    )
+    return MCPHealthRecordListResponse(total=total, items=items)
+
+
+@router.get(
+    "/{server_id}/call-logs",
+    response_model=MCPCallLogListResponse,
+)
+def list_mcp_server_call_logs(
+    server_id: str,
+    start: Optional[datetime] = Query(None, description="inclusive lower bound on called_at"),
+    end: Optional[datetime] = Query(None, description="inclusive upper bound on called_at"),
+    user_id: Optional[str] = Query(None),
+    ai_tool_id: Optional[str] = Query(None),
+    capability_id: Optional[str] = Query(None, description="filter by mcp_capability_id"),
+    result: Optional[str] = Query(None, description="success | failed"),
+    invoke_type: Optional[str] = Query(None, description="agent_auto | user_confirmed | mcp_test"),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPCallLogListResponse:
+    """Paginated + filtered invocation log scoped to this server.
+
+    All filters AND together. ``input_summary`` / ``output_summary``
+    are already sanitized at insert time (secrets redacted, long
+    values truncated, full response body never stored).
+    """
+    total, items = observe.list_call_logs(
+        db, server_id,
+        start=start, end=end,
+        user_id=user_id, ai_tool_id=ai_tool_id, capability_id=capability_id,
+        result=result, invoke_type=invoke_type,
+        offset=offset, limit=limit,
+    )
+    return MCPCallLogListResponse(total=total, items=items)
+
+
+@router.get(
+    "/{server_id}/changes",
+    response_model=MCPChangeLogListResponse,
+)
+def list_mcp_server_changes(
+    server_id: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> MCPChangeLogListResponse:
+    """Paginated audit-log view scoped to this server.
+
+    Union of three audit sources: ``mcp_server`` rows for this server,
+    ``mcp_capability`` rows for any of its capabilities (quota edits),
+    and ``mcp_capability_authorization`` rows for any of its
+    authorizations.
+    """
+    total, items = observe.list_change_logs(
+        db, server_id, offset=offset, limit=limit,
+    )
+    return MCPChangeLogListResponse(total=total, items=items)

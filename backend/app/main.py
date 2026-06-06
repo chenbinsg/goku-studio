@@ -35,6 +35,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Studio API is served under /api/studio/v1/  (Phase 4 URL split)
-# Legacy /api/v1/ aliases are registered in the monorepo's main.py
-app.include_router(studio_router, prefix="/api/studio/v1")
+# Sub-routers already carry "/api/v1/" in their individual prefixes
+# (e.g. agents.router has prefix="/api/v1/agents").  Mounting the aggregate
+# at "" keeps routes at /api/v1/... which is backward-compatible with the
+# Console frontend during the transition period.
+#
+# Phase 5 follow-on: strip "/api/v1/" from individual sub-router files and
+# re-mount the aggregate at prefix="/api/studio/v1" for the final URL split.
+app.include_router(studio_router)
