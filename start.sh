@@ -54,8 +54,8 @@ echo "Frontend PID: $FRONTEND_PID"
 echo ""
 echo "╔══════════════════════════════════════════════╗"
 echo "║  Goku Studio running                         ║"
-echo "║  Backend  → http://localhost:${BACKEND_PORT}           ║"
-echo "║  Frontend → http://localhost:${FRONTEND_PORT}           ║"
+echo "║  Backend  → http://localhost:${BACKEND_PORT} ║"
+echo "║  Frontend → http://localhost:${FRONTEND_PORT}║"
 echo "╚══════════════════════════════════════════════╝"
 
 # Wait for either process to exit and kill both on Ctrl-C
