@@ -100,16 +100,18 @@ const DocumentCenterPage: React.FC = () => {
 
   const fetchCategories = useCallback(async () => {
     try {
-      const data = await api.get<Category[]>('/docs/categories')
-      setCategories(data as any)
+      const res = await api.get<Category[]>('/docs/categories')
+      const data = (res as any).data ?? res
+      setCategories(Array.isArray(data) ? data : [])
     } catch { /* ignore */ }
   }, [])
 
   const fetchDocs = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await api.get<DocPage[]>('/docs')
-      setDocs(data as any)
+      const res = await api.get<DocPage[]>('/docs')
+      const data = (res as any).data ?? res
+      setDocs(Array.isArray(data) ? data : (data?.items ?? []))
     } catch {
       message.error(t('docs_load_failed', 'Failed to load documents'))
     } finally {
