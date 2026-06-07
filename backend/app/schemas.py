@@ -258,10 +258,15 @@ class ToolList(BaseModel):
 
 
 class ToolRegister(BaseModel):
+    # Avoid shadowing Pydantic BaseModel.schema().
+    # Accept the existing API payload field "schema", but expose it internally
+    # as tool_schema.
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str
     description: str
     handler: str
-    schema: dict[str, Any]
+    tool_schema: dict[str, Any] = Field(alias="schema")
     permission_level: int = Field(default=0, ge=0, le=3)
 
 

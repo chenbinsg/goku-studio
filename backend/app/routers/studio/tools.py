@@ -66,7 +66,7 @@ def get_tool(tool_name: str, db: Session = Depends(get_db), current_user: models
 def register_tool(tool_data: schemas.ToolRegister, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     if not current_user.is_superuser:
         raise HTTPException(status_code=403, detail="Admin required")
-    tool = models.Tool(id=str(uuid.uuid4()), name=tool_data.name, description=tool_data.description, handler=tool_data.handler, schema=tool_data.schema, permission_level=tool_data.permission_level)
+    tool = models.Tool(id=str(uuid.uuid4()), name=tool_data.name, description=tool_data.description, handler=tool_data.handler, schema=tool_data.tool_schema, permission_level=tool_data.permission_level)
     db.add(tool)
     db.commit()
     return {"tool_id": tool.id, "status": "registered"}
