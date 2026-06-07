@@ -2,8 +2,8 @@
 # Core runtime (agent executor, stateful, approval service) is NOT included —
 # those live in goku-core.
 
-# Shared foundation
-goku-shared>=0.1.0
+# Shared foundation (installed from packages/goku-shared in this repo)
+# goku-shared is not on PyPI — install via: pip install -e packages/goku-shared
 
 # Web framework
 fastapi>=0.109.0
