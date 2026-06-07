@@ -29,6 +29,9 @@ python-magic>=0.4
 aiofiles>=23.0
 pillow>=10.0
 
+# Testing
+pytest>=7.0
+
 # Utilities
 httpx>=0.26
 python-jose[cryptography]>=3.3
