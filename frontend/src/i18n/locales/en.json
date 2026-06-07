@@ -2210,15 +2210,5 @@
   "pref_save_error": "Failed to save preferences",
   "save": "Save",
   "saving": "Saving…",
-<<<<<<< HEAD
-  "layout_proposals_label": "Evolution Proposals",
-  "layout_stateful_policies_label": "Stateful Policies",
-  "layout_stateful_audit_label": "State Transition Audit",
-  "return_to_runtime": "Return to Runtime",
-  "light_mode": "Light mode",
-  "dark_mode": "Dark mode"
-}
-=======
   "layout_proposals_label": "Evolution Proposals"
 }
->>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
