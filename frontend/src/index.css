@@ -22,6 +22,7 @@ body {
   box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
 }
 
+<<<<<<< HEAD
 .ant-layout-sider-children {
   display: flex !important;
   flex-direction: column !important;
@@ -35,6 +36,8 @@ body {
   overflow-x: hidden !important;
 }
 
+=======
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
 .ant-layout-header {
   background: #fff;
   padding: 0 24px;

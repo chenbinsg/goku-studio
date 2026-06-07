@@ -1,0 +1,35 @@
+# goku-studio runtime dependencies
+# Core runtime (agent executor, stateful, approval service) is NOT included —
+# those live in goku-core.
+
+# Shared foundation (installed from packages/goku-shared in this repo)
+# goku-shared is not on PyPI — install via: pip install -e packages/goku-shared
+
+# Web framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# Database
+sqlalchemy>=2.0
+alembic>=1.13
+pymysql>=1.1
+cryptography>=41.0
+
+# Pydantic
+pydantic>=2.5
+pydantic-settings>=2.1
+
+# LLM (Studio uses LLM only for agent-config previews / description generation)
+openai>=1.12
+anthropic>=0.18
+
+# File handling
+python-magic>=0.4
+aiofiles>=23.0
+pillow>=10.0
+
+# Utilities
+httpx>=0.26
+python-jose[cryptography]>=3.3
+passlib[bcrypt]>=1.7

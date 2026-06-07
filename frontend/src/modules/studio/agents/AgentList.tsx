@@ -35,7 +35,10 @@ import {
   LockOutlined,
   MailOutlined,
   PictureOutlined,
+<<<<<<< HEAD
   PlayCircleOutlined,
+=======
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
   PlusOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -633,6 +636,7 @@ const AgentList: React.FC = () => {
     }
   }
 
+<<<<<<< HEAD
   const RUNTIME_URL = (import.meta.env.VITE_RUNTIME_URL as string | undefined) || 'http://localhost:5106'
   const handleTest = (agent: AgentDefinition) => {
     const { token, refreshToken } = useAuthStore.getState()
@@ -643,6 +647,8 @@ const AgentList: React.FC = () => {
     window.open(`${RUNTIME_URL}/?${params.toString()}`, '_blank')
   }
 
+=======
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
   const handleToggleFavorite = async (agent: AgentDefinition) => {
     try {
       const res = await agentApi.toggleFavorite(agent.id)
@@ -869,7 +875,10 @@ const AgentList: React.FC = () => {
                               onEdit={handleEdit}
                               onDelete={handleDelete}
                               onExport={handleExport}
+<<<<<<< HEAD
                               onTest={handleTest}
+=======
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
                               onToggleActive={handleToggleActive}
                               onToggleFavorite={handleToggleFavorite}
                               selected={selectedAgentIds.includes(agent.id)}
@@ -1834,7 +1843,10 @@ function AgentTile({
   onEdit,
   onDelete,
   onExport,
+<<<<<<< HEAD
   onTest,
+=======
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
   onToggleActive,
   onToggleFavorite,
   selected,
@@ -1847,7 +1859,10 @@ function AgentTile({
   onEdit: (agent: AgentDefinition) => void
   onDelete: (id: string) => void
   onExport: (agent: AgentDefinition) => void
+<<<<<<< HEAD
   onTest: (agent: AgentDefinition) => void
+=======
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
   onToggleActive: (agent: AgentDefinition, active: boolean) => void
   onToggleFavorite: (agent: AgentDefinition) => void
   selected: boolean
@@ -2006,6 +2021,7 @@ function AgentTile({
           agentType={agent.agent_type}
           onClick={onCapacityClick ? () => onCapacityClick(agent) : undefined}
         />
+<<<<<<< HEAD
         <Tooltip title={t('agent_tile_test_tooltip', '在 Core 中测试此 Agent')} placement="bottom">
           <Button
             size="small"
@@ -2017,6 +2033,8 @@ function AgentTile({
             {t('agent_tile_test_button', 'Test')}
           </Button>
         </Tooltip>
+=======
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
       </div>
     </div>
   )

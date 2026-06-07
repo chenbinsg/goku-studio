@@ -4,8 +4,12 @@
     "skipLibCheck": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
+<<<<<<< HEAD
     "allowSyntheticDefaultImports": true,
     "strict": true
+=======
+    "allowSyntheticDefaultImports": true
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
   },
   "include": ["vite.config.ts"]
 }

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Dependencies
 node_modules/
 __pycache__/
@@ -33,3 +34,16 @@ build/
 # IDE
 .vscode/
 .idea/
+=======
+__pycache__/
+*.pyc
+*.pyo
+.env
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+reports/
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50

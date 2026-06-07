@@ -2210,6 +2210,7 @@
   "pref_save_error": "保存失败",
   "save": "保存设置",
   "saving": "保存中…",
+<<<<<<< HEAD
   "layout_proposals_label": "自我进化提案",
   "layout_stateful_policies_label": "状态动作策略",
   "layout_stateful_audit_label": "状态转移审计",
@@ -2217,3 +2218,7 @@
   "light_mode": "浅色模式",
   "dark_mode": "深色模式"
 }
+=======
+  "layout_proposals_label": "自我进化提案"
+}
+>>>>>>> 1f8749159addca72722fdb94d3bf713a82b78b50
