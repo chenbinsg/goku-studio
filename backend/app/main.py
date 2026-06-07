@@ -23,13 +23,13 @@ from app.routers.studio import router as studio_router  # type: ignore[import]
 
 app = FastAPI(
     title="Goku Studio API",
-    version="1.0.0",
+    version="1.9.30",
     description="AI application construction API — agents, workflows, tools, MCP, knowledge.",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=os.environ.get("ALLOWED_ORIGINS", "http://localhost:5106").split(","),
+    allow_origins=os.environ.get("ALLOWED_ORIGINS", "http://localhost:5106,http://localhost:5107").split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

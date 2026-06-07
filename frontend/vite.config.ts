@@ -12,5 +12,11 @@ export default defineConfig({
   server: {
     host: "0.0.0.0",
     port: Number(process.env.VITE_STUDIO_PORT || 5107),
+    proxy: {
+      "/api": {
+        target: process.env.VITE_STUDIO_BACKEND_URL || "http://localhost:8107",
+        changeOrigin: true,
+      },
+    },
   },
 });

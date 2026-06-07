@@ -24,7 +24,7 @@ from app.db import get_db
 from app.models import AutoSkill
 from app.auth import get_current_user
 
-router = APIRouter(prefix="/auto-skills", tags=["auto-skills"])
+router = APIRouter(prefix="/api/v1/auto-skills", tags=["auto-skills"])
 
 
 # ── Schemas ───────────────────────────────────────────────────────────────────

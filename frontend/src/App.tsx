@@ -38,8 +38,9 @@ const RUNTIME_URL = (import.meta.env.VITE_RUNTIME_URL as string | undefined) || 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
   if (!isAuthenticated) {
-    // Send the user to goku-core's login page
-    window.location.href = `${RUNTIME_URL}/login`
+    // Send the user to goku-core's login page.
+    // ?next=/bridge/studio tells Core to redirect back to Studio (with JWT) after login.
+    window.location.href = `${RUNTIME_URL}/login?next=/bridge/studio`
     return null
   }
   return <>{children}</>

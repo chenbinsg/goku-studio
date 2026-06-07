@@ -1,7 +1,7 @@
 {
   "name": "goku-studio-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.9.30",
   "type": "module",
   "scripts": {
     "dev": "vite",
