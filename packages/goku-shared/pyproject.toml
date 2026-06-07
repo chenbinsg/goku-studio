@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "goku-shared"
+version = "0.1.0"
+description = "Shared foundation (DB, auth, schemas, config) for Goku services"
+requires-python = ">=3.11"
+dependencies = [
+    "sqlalchemy>=2.0",
+    "pydantic>=2.5",
+    "pydantic-settings>=2.1",
+    "python-jose[cryptography]>=3.3",
+    "passlib[bcrypt]>=1.7",
+    "pymysql>=1.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["goku_shared*"]
