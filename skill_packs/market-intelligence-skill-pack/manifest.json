@@ -1,0 +1,63 @@
+{
+  "$schema": "https://aios.spec/v1/manifest.schema.json",
+  "id": "market-intelligence-skill-pack",
+  "name": "市场情报技能包 (Market Intelligence)",
+  "version": "1.0.0",
+  "description": "日本市场监控与情报收集工具集：实时股价查询（含日股、ETF、加密货币）、每日市场动态报告生成、百悟机会情报（电信/银行/金融科技/采购）、股东监控，以及日本股票交易分析。",
+  "aios_version_min": "1.0.0",
+  "author": "system",
+  "category": "finance",
+  "license": "MIT",
+  "tags": ["market", "stock", "japan", "finance", "intelligence", "shareholder", "monitoring", "daily-report"],
+  "python_version_min": "3.10",
+  "dependencies": ["requests>=2.31", "yfinance>=0.2"],
+  "system_dependencies": [],
+  "permissions_required": ["http_request"],
+  "tools": [
+    {
+      "name": "get_stock_price",
+      "file": "tools/get_stock_price.py",
+      "class": "GetStockPriceTool",
+      "description": "Real-time stock prices for global equities, ETFs, indices, crypto, forex via Yahoo Finance"
+    },
+    {
+      "name": "send_market_report",
+      "file": "tools/send_market_report.py",
+      "class": "SendMarketReportTool",
+      "description": "Generate and distribute daily market dynamics report with industry news and opportunity signals"
+    },
+    {
+      "name": "baiwu_daily_report",
+      "file": "tools/baiwu_daily_report.py",
+      "class": "BaiwuDailyReportTool",
+      "description": "Baiwu opportunity intelligence report (telecom, banking, fintech, procurement, competitor, policy)"
+    },
+    {
+      "name": "jp_stock_trading",
+      "file": "tools/jp_stock_trading.py",
+      "class": "JpStockTradingTool",
+      "description": "Japan stock market analysis and trading signal generation"
+    }
+  ],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "MARKET_MONITOR_API_URL": {
+        "type": "string",
+        "description": "Market monitor backend API URL (optional — defaults to public Yahoo Finance)"
+      },
+      "BAIWU_API_URL": {
+        "type": "string",
+        "description": "Baiwu intelligence API endpoint (required for baiwu_daily_report)"
+      }
+    }
+  },
+  "example_tasks": [
+    "查询丰田汽车（7203.T）今日股价及52周高低点",
+    "生成今日A股市场情报报告并发送给团队",
+    "监控前十大股东持仓变化",
+    "分析今日电信行业招标机会",
+    "生成本周日本股市技术分析报告"
+  ],
+  "quickstart": "无需额外配置即可查询股价。运行：aios-cli task create \"查询7203.T今日股价\""
+}

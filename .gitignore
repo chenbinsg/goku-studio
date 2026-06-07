@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs & pids
+*.log
+*.pid
+frontend.log
+frontend.pid
+
+# Build outputs
+dist/
+build/
+.vite/
+
+# OS
+.DS_Store
+
+# Python cache
+*.egg-info/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/

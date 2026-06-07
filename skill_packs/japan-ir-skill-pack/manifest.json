@@ -1,0 +1,67 @@
+{
+  "$schema": "https://aios.spec/v1/manifest.schema.json",
+  "id": "japan-ir-skill-pack",
+  "name": "日本 IR 助理技能包 (Japan IR Assistant)",
+  "version": "1.0.0",
+  "description": "面向日本上市企业 IR 部门的完整工具集：投资者管理、路演活动、批量邮件邀请、审批流程、IR 报告生成，以及 Microsoft Teams 通知。需配置 IRA_API_BASE_URL 指向 IRA 后台服务。",
+  "aios_version_min": "1.0.0",
+  "author": "system",
+  "category": "finance",
+  "license": "MIT",
+  "tags": ["IR", "investor-relations", "japan", "finance", "roadshow", "email"],
+  "python_version_min": "3.10",
+  "dependencies": ["requests>=2.31"],
+  "system_dependencies": [],
+  "permissions_required": ["http_request", "email_send"],
+  "tools": [
+    { "name": "ira_search_investors",         "file": "tools/ira_tools.py",      "class": "IraSearchInvestorsTool" },
+    { "name": "ira_create_investor",          "file": "tools/ira_tools.py",      "class": "IraCreateInvestorTool" },
+    { "name": "ira_update_investor",          "file": "tools/ira_tools.py",      "class": "IraUpdateInvestorTool" },
+    { "name": "ira_create_event",             "file": "tools/ira_tools.py",      "class": "IraCreateEventTool" },
+    { "name": "ira_list_events",              "file": "tools/ira_tools.py",      "class": "IraListEventsTool" },
+    { "name": "ira_add_event_participants",   "file": "tools/ira_tools.py",      "class": "IraAddEventParticipantsTool" },
+    { "name": "ira_update_participant_status","file": "tools/ira_tools.py",      "class": "IraUpdateParticipantStatusTool" },
+    { "name": "ira_get_event_summary",        "file": "tools/ira_tools.py",      "class": "IraGetEventSummaryTool" },
+    { "name": "ira_create_email_template",    "file": "tools/ira_tools.py",      "class": "IraCreateEmailTemplateTool" },
+    { "name": "ira_render_email_template",    "file": "tools/ira_tools.py",      "class": "IraRenderEmailTemplateTool" },
+    { "name": "ira_queue_bulk_emails",        "file": "tools/ira_tools.py",      "class": "IraQueueBulkEmailsTool" },
+    { "name": "ira_send_email_queue",         "file": "tools/ira_tools.py",      "class": "IraSendEmailQueueTool" },
+    { "name": "ira_log_communication",        "file": "tools/ira_tools.py",      "class": "IraLogCommunicationTool" },
+    { "name": "ira_create_task",              "file": "tools/ira_tools.py",      "class": "IraCreateTaskTool" },
+    { "name": "ira_list_tasks",               "file": "tools/ira_tools.py",      "class": "IraListTasksTool" },
+    { "name": "ira_notify_teams",             "file": "tools/ira_tools.py",      "class": "IraNotifyTeamsTool" },
+    { "name": "ira_log_agent_action",         "file": "tools/ira_tools.py",      "class": "IraLogAgentActionTool" },
+    { "name": "ira_create_group",             "file": "tools/ira_tools.py",      "class": "IraCreateGroupTool" },
+    { "name": "ira_list_groups",              "file": "tools/ira_tools.py",      "class": "IraListGroupsTool" },
+    { "name": "ira_add_to_group",             "file": "tools/ira_tools.py",      "class": "IraAddToGroupTool" },
+    { "name": "ira_create_approval",          "file": "tools/ira_tools.py",      "class": "IraCreateApprovalTool" },
+    { "name": "ira_update_approval",          "file": "tools/ira_tools.py",      "class": "IraUpdateApprovalTool" },
+    { "name": "ira_list_approvals",           "file": "tools/ira_tools.py",      "class": "IraListApprovalsTool" },
+    { "name": "ira_upload_material",          "file": "tools/ira_tools.py",      "class": "IraUploadMaterialTool" },
+    { "name": "ira_link_material",            "file": "tools/ira_tools.py",      "class": "IraLinkMaterialTool" },
+    { "name": "send_ir_report",               "file": "tools/send_ir_report.py", "class": "SendIrReportTool" }
+  ],
+  "config_schema": {
+    "type": "object",
+    "properties": {
+      "IRA_API_BASE_URL": {
+        "type": "string",
+        "description": "Base URL of the IRA backend service",
+        "default": "http://localhost:8088/api/ira"
+      },
+      "IRA_API_TOKEN": {
+        "type": "string",
+        "description": "Bearer token for authenticating with the IRA API (optional)"
+      }
+    },
+    "required": ["IRA_API_BASE_URL"]
+  },
+  "example_tasks": [
+    "搜索所有外资机构投资者，按重要度排序",
+    "为Q3业绩说明会创建活动并批量发送邮件邀请",
+    "生成本周IR投资者互动报告",
+    "将新投资者添加到「核心机构」分组",
+    "提交邮件发送审批并等待确认"
+  ],
+  "quickstart": "配置 IRA_API_BASE_URL 环境变量后运行：aios-cli task create \"搜索重要度高的外资机构投资者\""
+}
