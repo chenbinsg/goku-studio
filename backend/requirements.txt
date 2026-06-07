@@ -29,6 +29,9 @@ python-magic>=0.4
 aiofiles>=23.0
 pillow>=10.0
 
+# Auth
+PyJWT>=2.8
+
 # Testing
 pytest>=7.0
 
