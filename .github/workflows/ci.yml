@@ -9,7 +9,9 @@ on:
 env:
   # Fake URL — models import without a real DB connection
   DATABASE_URL: mysql+pymysql://ci:ci@localhost:3306/goku_studio_ci
-  SECRET_KEY: ci-secret-key-thisisthirtytwochars00
+  # Keep this intentionally short. Some auth imports exercise bcrypt/passlib,
+  # and bcrypt has a hard 72-byte password/input limit.
+  SECRET_KEY: ci-secret-key-32-chars-ok
 
 jobs:
   # ── Boundary & unit tests ──────────────────────────────────────────────────
@@ -28,12 +30,19 @@ jobs:
         run: pip install -e packages/goku-shared
 
       - name: Install Studio deps
-        run: pip install -r requirements.txt
         working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          # Required by Pydantic EmailStr.
+          pip install "email-validator>=2,<3"
+          # Avoid bcrypt 5.x raising on legacy/import-time test values >72 bytes.
+          # Remove this pin after application/test password validation is hardened.
+          pip install "bcrypt<5"
 
       - name: Run boundary tests
-        run: pytest tests/ -v --tb=short
         working-directory: backend
+        run: pytest tests/ -v --tb=short
 
   # ── Ruff lint ─────────────────────────────────────────────────────────────
   lint:
@@ -45,13 +54,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
 
       - name: Install ruff
         run: pip install ruff
 
       - name: Lint
-        run: ruff check app/ --select E,F,W --ignore E501
         working-directory: backend
+        run: ruff check app/ --select E,F,W --ignore E501
 
   # ── Architecture boundary gate ────────────────────────────────────────────
   boundary:
@@ -67,9 +77,14 @@ jobs:
 
       - name: Install goku-shared + deps
         run: |
+          python -m pip install --upgrade pip
           pip install -e packages/goku-shared
           pip install -r backend/requirements.txt
+          # Required by Pydantic EmailStr.
+          pip install "email-validator>=2,<3"
+          # Keep boundary import tests stable with current passlib/bcrypt behavior.
+          pip install "bcrypt<5"
 
       - name: Studio boundary test (no Core runtime imports)
-        run: pytest tests/test_studio_boundary.py::test_studio_routers_do_not_import_core_runtime -v
         working-directory: backend
+        run: pytest tests/test_studio_boundary.py::test_studio_routers_do_not_import_core_runtime -v
