@@ -318,7 +318,7 @@ SUBAGENT_TYPES = {
             # ── 交互 ──────────────────────────────────────────────
             "ask_user",
             # ── 数据查询 ─────────────────────────────────────────
-            "aibi_query", "sql_query", "http_request",
+            "sql_query", "http_request",
             # ── 知识与记忆 ────────────────────────────────────────
             "knowledge_search", "memory_search", "memory_write",
             # ── Web ──────────────────────────────────────────────
@@ -350,7 +350,7 @@ SUBAGENT_TYPES = {
             "- **接入指导**：新商户/新 PSP 接入配置、沙盒测试、上线核查\n\n"
             "## 工作优先级\n"
             "1. 先用 knowledge_search 查错误码/接入文档，再用 memory_search 查历史案例\n"
-            "2. 交易状态不明时，必须先查单（aibi_query → sql_query → http_request），不得凭超时推断失败\n"
+            "2. 交易状态不明时，必须先查单（aibi-qa__query_statistics → sql_query → http_request），不得凭超时推断失败\n"
             "3. 高危场景（全量失败/重复扣款/资金风险）立即 escalate_to_human + teams_message\n"
             "4. 签名问题用 code_execute 验证算法，不要凭经验猜测\n\n"
             "## 输出规范\n"
@@ -415,7 +415,6 @@ SUBAGENT_TYPES = {
         "max_steps": 20,
         "tools": [
             "business_report",   # ① generate bilingual PDF (calls AIBI internally)
-            "aibi_query",        # ② ad-hoc BI queries for extra metrics / verification
             "email_send",        # ③ email report to reviewers
             "feishu_message",    # ④ IM notification (Feishu)
             "teams_message",     # ⑤ IM notification (Teams)
@@ -448,7 +447,7 @@ SUBAGENT_TYPES = {
             "## データソースの原則\n"
             "- すべての数値データは AIBI 経由で取得する（business_report ツールが内部で呼び出す）\n"
             "- 手動入力・推測・記憶による数値の補完は一切行わない\n"
-            "- 追加指標が必要な場合のみ aibi_query を単独で使用する\n\n"
+            "- 追加指標が必要な場合のみ aibi-qa__query_statistics を単独で使用する\n\n"
 
             "## 注意事項\n"
             "- PDF 生成成功（ok=true）を確認してから通知を送る。失敗時はエラーをユーザーに報告する\n"
@@ -492,7 +491,7 @@ SUBAGENT_TYPES = {
         "default_model": None,
     },
     "data_analyst": {
-        "tools": ["aibi_query","code_execute","shell_execute","file_read","file_write","file_list",
+        "tools": ["code_execute","shell_execute","file_read","file_write","file_list",
                   "knowledge_search","memory_search","http_request","web_fetch","web_search",
                   "todo_write","analyze_image"] + _A2A_TOOLS,
         "max_steps": 20,
@@ -504,7 +503,7 @@ SUBAGENT_TYPES = {
             "Your capabilities: SQL queries, Python pandas/numpy analysis, chart generation, data cleaning, "
             "statistical modeling, and insight extraction from datasets. "
             "For enterprise BI queries (GMV, GPV, transaction counts, success rates), "
-            "ALWAYS use aibi_query first — it connects directly to the BI platform. "
+            "ALWAYS use aibi-qa__query_statistics first — it connects directly to the BI platform. "
             "Provide quantitative results with clear business interpretation."
         ),
         "default_model": None,

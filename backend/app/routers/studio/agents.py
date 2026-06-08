@@ -159,6 +159,34 @@ def bulk_assign_agents_csv(
     return result
 
 
+@router.get("/mcp-tool-options")
+def list_mcp_tool_options(db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Live MCP capability options for the agent "授权工具" selector.
+
+    Sourced directly from ``mcp_capabilities`` (active capabilities on enabled,
+    non-deleted servers), NOT from the ``tools`` table — so a freshly-synced
+    capability shows up immediately. Names use the runtime form
+    ``<server.code>__<capability_name>`` that goes into ``allowed_tools``."""
+    from app.models_studio import MCPCapability, MCPServer
+    rows = (
+        db.query(MCPServer.code, MCPCapability.capability_name, MCPCapability.description)
+        .join(MCPCapability, MCPCapability.server_id == MCPServer.id)
+        .filter(
+            MCPCapability.status == "active",
+            MCPServer.status == "enabled",
+            MCPServer.deleted_at.is_(None),
+        )
+        .order_by(MCPServer.code, MCPCapability.capability_name)
+        .all()
+    )
+    return {
+        "tools": [
+            {"name": f"{code}__{cap_name}", "description": desc or "", "server": code}
+            for code, cap_name, desc in rows
+        ]
+    }
+
+
 @router.get("/base-types")
 def list_base_types(user = Depends(get_current_user)):
     """Return all built-in agent types available as base for custom agents."""
@@ -367,6 +395,21 @@ def _discover_skills() -> list[dict]:
 
 def _valid_skill_ids() -> set[str]:
     return {skill["id"] for skill in _discover_skills()}
+
+
+def _filter_allowed_tools(tools, base_tools=None):
+    """Normalize the submitted allowed_tools: drop blanks and duplicates but
+    otherwise store the value as-is. The agent editor already constrains choices
+    to registry tools, MCP capabilities (``<server>__<capability>``) and
+    directives (``@mcp:none``); unknown names are harmless (ignored at execution).
+    Replaces the old "subset of base-type tools" rule, which silently dropped MCP
+    capabilities and cross-type tools."""
+    seen, out = set(), []
+    for t in (tools or []):
+        if isinstance(t, str) and t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
 
 
 @router.get("/email-pending-counts")
@@ -636,7 +679,7 @@ def create_agent(
     base = SUBAGENT_TYPES[data.agent_type]
     # allowed_tools must be a subset of the base type's tools
     if data.allowed_tools is not None:
-        data.allowed_tools = [t for t in data.allowed_tools if t in base["tools"]]
+        data.allowed_tools = _filter_allowed_tools(data.allowed_tools, base["tools"])
     if data.skills is not None:
         valid_skills = _valid_skill_ids()
         data.skills = [s for s in data.skills if s in valid_skills]
@@ -1004,7 +1047,7 @@ def import_agent(
 
     allowed_tools = agent_data.get("allowed_tools")
     if allowed_tools is not None:
-        allowed_tools = [t for t in allowed_tools if t in base["tools"]]
+        allowed_tools = _filter_allowed_tools(allowed_tools, base["tools"])
 
     imported_figure_url = _write_imported_figure(final_name, payload.get("figure_asset"))
     figure_url = imported_figure_url or agent_data.get("figure_url")
@@ -1094,7 +1137,7 @@ def update_agent(
         agent.is_active = data.is_active
     if data.allowed_tools is not None:
         base_tools = SUBAGENT_TYPES.get(agent.agent_type, {}).get("tools", [])
-        agent.allowed_tools = [t for t in data.allowed_tools if t in base_tools]
+        agent.allowed_tools = _filter_allowed_tools(data.allowed_tools, base_tools)
     if data.name_i18n is not None:
         agent.name_i18n = data.name_i18n
     if data.display_name is not None:

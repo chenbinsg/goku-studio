@@ -181,6 +181,8 @@ const AgentList: React.FC = () => {
   const aname = (agent: AgentDefinition) => getAgentName(agent, lang)
   const [agents, setAgents] = useState<AgentDefinition[]>([])
   const [baseTypes, setBaseTypes] = useState<BaseType[]>([])
+  const [allTools, setAllTools] = useState<{ name: string; description?: string }[]>([])
+  const [mcpTools, setMcpTools] = useState<{ name: string; description?: string }[]>([])
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
   const [availableRoles, setAvailableRoles] = useState<any[]>([])
   const [canonicalDepts, setCanonicalDepts] = useState<string[]>([])
@@ -256,6 +258,25 @@ const AgentList: React.FC = () => {
     }
   }
 
+  // Full tool registry (built-in + DB + MCP capabilities named "<server>__<cap>").
+  // Used to populate the allowed_tools selector beyond the base type's preset list.
+  const fetchAllTools = async () => {
+    try {
+      const data = await api.get<{ tools: { name: string; description?: string }[] }>('/tools')
+      setAllTools(data.tools || [])
+    } catch {
+      // ignore — selector falls back to base-type tools only
+    }
+    // MCP capabilities are sourced LIVE (not from /tools, which no longer carries
+    // them) so freshly-synced capabilities appear in the dropdown immediately.
+    try {
+      const mcp = await api.get<{ tools: { name: string; description?: string }[] }>('/agents/mcp-tool-options')
+      setMcpTools(mcp.tools || [])
+    } catch {
+      // ignore — MCP group will be empty
+    }
+  }
+
   const fetchRoles = async () => {
     try {
       const data = await api.get<{ items: any[] }>('/roles')
@@ -286,6 +307,7 @@ const AgentList: React.FC = () => {
   useEffect(() => {
     fetchAgents()
     fetchBaseTypes()
+    fetchAllTools()
     fetchSkills()
     fetchRoles()
     fetchCanonicalDepts()
@@ -401,6 +423,7 @@ const AgentList: React.FC = () => {
 
   const handleEdit = (agent: AgentDefinition) => {
     setEditingId(agent.id)
+    fetchAllTools()  // refresh tool/MCP list each open so newly-registered tools show up
     const base = baseTypes.find(t => t.key === agent.agent_type) || null
     setSelectedBaseType(base)
     form.setFieldsValue({
@@ -1185,24 +1208,33 @@ const AgentList: React.FC = () => {
                 label: t('agent_edit_tab_capability'),
                 children: (
                   <div style={{ paddingTop: 8 }}>
-                    {selectedBaseType && (
                       <Form.Item
-                        label={
-                          <Space>
-                            <span>{t('agent_edit_form_tools')}</span>
-                            <Tag style={{ fontSize: 11 }}>{t('agent_edit_tools_base_count', { count: selectedBaseType.tools.length })}</Tag>
-                          </Space>
-                        }
+                        label={t('agent_edit_form_tools')}
                         name="allowed_tools"
                         help={t('agent_edit_tools_help')}
                       >
                         <Select
                           mode="multiple"
                           allowClear
-                          options={selectedBaseType.tools.map(tool => ({ value: tool, label: tool }))}
+                          showSearch
+                          optionFilterProp="value"
+                          placeholder={t('agent_edit_tools_placeholder')}
+                          options={(() => {
+                            const baseList = selectedBaseType?.tools || []
+                            const baseSet = new Set(baseList)
+                            const mcpNames = new Set(mcpTools.map(x => x.name))
+                            const other = allTools.filter(x => !baseSet.has(x.name) && !mcpNames.has(x.name) && !x.name.includes('__'))
+                            const mcp = mcpTools.filter(x => !baseSet.has(x.name))
+                            const toOpt = (n: string) => ({ value: n, label: n })
+                            return [
+                              { label: t('agent_edit_tools_group_base'), options: baseList.map(toOpt) },
+                              { label: t('agent_edit_tools_group_other'), options: other.map(x => toOpt(x.name)) },
+                              { label: t('agent_edit_tools_group_mcp'), options: mcp.map(x => toOpt(x.name)) },
+                              { label: t('agent_edit_tools_group_directive'), options: [{ value: '@mcp:none', label: t('agent_edit_tools_mcp_none_label') }] },
+                            ]
+                          })()}
                         />
                       </Form.Item>
-                    )}
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <Form.Item label={t('agent_edit_form_model')} name="model_override" help={t('agent_edit_model_help')}>
