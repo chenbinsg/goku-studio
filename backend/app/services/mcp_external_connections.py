@@ -139,6 +139,8 @@ def _to_list_item(conn: MCPExternalConnection) -> dict[str, Any]:
         "enabled": bool(conn.enabled),
         "test_status": conn.test_status,
         "last_tested_at": conn.last_tested_at,
+        # Non-secret scope (allowed_domains / allowed_buckets / allowed_dirs).
+        "allowed_scopes": conn.allowed_scopes_json or {},
         "created_at": conn.created_at,
         "updated_at": conn.updated_at,
     }

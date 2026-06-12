@@ -858,36 +858,61 @@ def update_server(
     return server
 
 
-def _references_block_delete(db: Session, server_id: str) -> Optional[str]:
-    """Return a human-readable reason if the server cannot be deleted.
+def _cascade_clear_dependents(db: Session, server_id: str) -> dict:
+    """Cascade-clear a server's OWN children so it can be deleted.
 
-    Block conditions (Task 1 scope):
-      - mcp_tools, mcp_resources, mcp_prompts, mcp_permissions have
-        active (non-deleted) rows for this server.
+    A server's capabilities / resources / prompts / permissions belong to
+    it — deleting the server takes them along (a folder takes its files),
+    rather than refusing because they exist. The earlier behaviour blocked
+    deletion whenever active capabilities existed, which made a normally
+    functioning server (whose upstream keeps exposing its capabilities, so
+    they stay ``active`` forever) impossible to delete.
 
-    Call logs (``mcp_call_logs``) do NOT block — they're preserved by
-    design via soft-delete of the parent (the row stays in DB so the FK
-    is satisfied; the call_log's ``server_id`` keeps resolving).
+    Lifecycle handling:
+      - capabilities → ``status='inactive'`` (NOT deleted: call logs keep
+        resolving via the soft-deleted parent server);
+      - the capabilities' authorizations and the server's resources /
+        prompts / permissions → soft-deleted (``deleted_at``).
+
+    Returns a per-kind count for the audit trail.
     """
-    # MCPCapability tracks lifecycle via ``status`` (active /
-    # inactive), NOT via ``deleted_at`` — count rows still flagged
-    # 'active' to mirror what the upstream server currently exposes.
-    checks = [
-        ("capabilities", db.query(MCPCapability).filter(
-            MCPCapability.server_id == server_id,
-            MCPCapability.status == "active",
-        ).count()),
-        ("resources", db.query(MCPResource).filter(MCPResource.server_id == server_id, MCPResource.deleted_at.is_(None)).count()),
-        ("prompts", db.query(MCPPrompt).filter(MCPPrompt.server_id == server_id, MCPPrompt.deleted_at.is_(None)).count()),
-        ("permissions", db.query(MCPPermission).filter(MCPPermission.server_id == server_id, MCPPermission.deleted_at.is_(None)).count()),
-    ]
-    blockers = [f"{name}: {n}" for name, n in checks if n > 0]
-    if blockers:
-        return (
-            "Server still has active dependents — clear them before deleting: "
-            + ", ".join(blockers)
+    now = datetime.utcnow()
+    counts: dict = {}
+
+    caps = (
+        db.query(MCPCapability)
+        .filter(MCPCapability.server_id == server_id, MCPCapability.status == "active")
+        .all()
+    )
+    for cap in caps:
+        cap.status = "inactive"
+        cap.updated_at = now
+    counts["capabilities"] = len(caps)
+
+    # Revoke authorizations granted on this server's capabilities so no
+    # principal keeps a dangling grant to a removed server.
+    counts["authorizations"] = (
+        db.query(MCPCapabilityAuthorization)
+        .filter(
+            MCPCapabilityAuthorization.mcp_server_id == server_id,
+            MCPCapabilityAuthorization.deleted_at.is_(None),
         )
-    return None
+        .update({MCPCapabilityAuthorization.deleted_at: now}, synchronize_session=False)
+    )
+
+    for kind, model in (
+        ("resources", MCPResource),
+        ("prompts", MCPPrompt),
+        ("permissions", MCPPermission),
+    ):
+        counts[kind] = (
+            db.query(model)
+            .filter(model.server_id == server_id, model.deleted_at.is_(None))
+            .update({model.deleted_at: now}, synchronize_session=False)
+        )
+
+    db.flush()
+    return counts
 
 
 def soft_delete_server(
@@ -897,9 +922,10 @@ def soft_delete_server(
     user_id: Optional[str],
     request: Optional[Request] = None,
 ) -> None:
-    """Mark a server as deleted. Refuses if status is ``enabled`` (must
-    be disabled first — irreversible-looking actions get a two-step
-    confirmation) or if dependents exist (tools / resources / etc.).
+    """Mark a server as deleted. Refuses only if status is ``enabled``
+    (must be disabled first). The server's own dependents (capabilities /
+    resources / prompts / permissions / authorizations) are cascade-cleared
+    rather than blocking the delete.
     """
     server = _get_by_id_strict(db, server_id)
     if server.status == "enabled":
@@ -907,9 +933,7 @@ def soft_delete_server(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete an enabled server. Disable it first.",
         )
-    block_reason = _references_block_delete(db, server_id)
-    if block_reason:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=block_reason)
+    _cascade_clear_dependents(db, server_id)
 
     server.deleted_at = datetime.utcnow()
     server.updated_by = user_id

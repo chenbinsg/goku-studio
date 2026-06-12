@@ -330,6 +330,53 @@ def list_mcp_server_capabilities(
     return MCPCapabilityListResponse(total=total, items=items)
 
 
+# NOTE: this static route MUST be declared before "/{capability_id}" below,
+# otherwise FastAPI captures "usage" as a capability_id.
+@router.get("/{server_id}/capabilities/usage")
+def preview_mcp_server_capabilities_usage(
+    server_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> dict:
+    """Impact preview: which of this server's capabilities are in use
+    (bound by an agent's allowed_tools) or authorized. Informational —
+    call before deleting the server or disabling capabilities."""
+    server = caps._get_server_or_404(db, server_id)
+    return caps.capability_usage(db, server)
+
+
+@router.post("/{server_id}/capabilities/{capability_id}/disable")
+def disable_mcp_server_capability(
+    server_id: str,
+    capability_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> dict:
+    """Manually disable a capability (status → 'disabled'). Survives
+    re-sync; drops out of the tool pool + knowledge catalog. Independent
+    of deletion. Returns the new status + usage impact."""
+    return caps.set_capability_status(
+        db, server_id, capability_id, disabled=True,
+        user_id=current_user.id, request=request,
+    )
+
+
+@router.post("/{server_id}/capabilities/{capability_id}/enable")
+def enable_mcp_server_capability(
+    server_id: str,
+    capability_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> dict:
+    """Re-enable a manually disabled capability (status → 'active')."""
+    return caps.set_capability_status(
+        db, server_id, capability_id, disabled=False,
+        user_id=current_user.id, request=request,
+    )
+
+
 @router.get(
     "/{server_id}/capabilities/{capability_id}",
     response_model=MCPCapabilityDetail,

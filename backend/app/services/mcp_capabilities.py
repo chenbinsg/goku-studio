@@ -36,6 +36,7 @@ from datetime import datetime
 from typing import Any, Optional, Tuple
 
 from fastapi import HTTPException, Request, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -143,13 +144,14 @@ def list_capabilities(
 ) -> Tuple[int, list[MCPCapabilityListItem]]:
     """Currently-exposed capabilities on ``server_id``.
 
-    Filters to ``status='active'`` so the list reflects the upstream
-    server's current surface area, not its full history.
+    Includes ``status in ('active', 'disabled')`` — the upstream's current
+    surface area plus any admin-disabled ones (so they remain visible and
+    re-enablable). Sync-retired ``'inactive'`` rows stay hidden.
     """
     _get_server_or_404(db, server_id)
     q = db.query(MCPCapability).filter(
         MCPCapability.server_id == server_id,
-        MCPCapability.status == "active",
+        MCPCapability.status.in_(("active", "disabled")),
     )
     if keyword:
         like = f"%{keyword}%"
@@ -170,6 +172,149 @@ def get_capability_detail(
     _get_server_or_404(db, server_id)
     cap = _get_capability_or_404(db, server_id, capability_id)
     return _capability_to_detail(cap, db)
+
+
+# ─── Manual enable / disable (independent of deletion) ─────────────────
+
+def _get_capability_any_status(
+    db: Session, server_id: str, capability_id: str,
+) -> MCPCapability:
+    """Like :func:`_get_capability_or_404` but does NOT require
+    ``status='active'`` — needed to re-enable a manually disabled
+    capability (whose status is ``'disabled'``)."""
+    cap = (
+        db.query(MCPCapability)
+        .filter(
+            MCPCapability.id == capability_id,
+            MCPCapability.server_id == server_id,
+        )
+        .first()
+    )
+    if cap is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"MCP capability {capability_id!r} not found on server {server_id!r}",
+        )
+    return cap
+
+
+def set_capability_status(
+    db: Session,
+    server_id: str,
+    capability_id: str,
+    *,
+    disabled: bool,
+    user_id: Optional[str] = None,
+    request: Optional[Request] = None,
+) -> dict[str, Any]:
+    """Manually disable / re-enable a single capability.
+
+    ``'disabled'`` is an **admin-set** status, deliberately distinct from
+    the sync-managed ``'inactive'``: :mod:`app.services.mcp_runtime` only
+    flips between ``active`` and ``inactive``, so a disabled capability
+    stays disabled across re-syncs. A disabled capability drops out of the
+    live tool pool and the knowledge catalog. Independent of deletion.
+
+    Returns the new status plus the impact (who was using / authorized for
+    this capability) so callers can warn the admin.
+    """
+    server = _get_server_or_404(db, server_id)
+    cap = _get_capability_any_status(db, server_id, capability_id)
+    impact = capability_usage(db, server, capability_names=[cap.capability_name])
+    before = cap.status
+    target = "disabled" if disabled else "active"
+    if before != target:
+        cap.status = target
+        cap.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(cap)
+        from app.services import mcp_authorizations as _authz
+        _authz._audit(
+            db, user_id=user_id,
+            action="mcp_capability.disable" if disabled else "mcp_capability.enable",
+            resource_type="mcp_capability", resource_id=cap.id, request=request,
+            details={"capability_name": cap.capability_name, "server_id": server_id,
+                     "changes": {"status": {"before": before, "after": target}}},
+        )
+        try:
+            from app.services import mcp_knowledge
+            mcp_knowledge.refresh_server_knowledge(db, server)
+        except Exception as e:  # KB hiccup must not fail the status change
+            logger.warning("KB refresh after capability status change failed: %s", e)
+    return {
+        "mcp_capability_id": cap.id,
+        "capability_name": cap.capability_name,
+        "status": cap.status,
+        "impact": impact,
+    }
+
+
+def capability_usage(
+    db: Session,
+    server: MCPServer,
+    *,
+    capability_names: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Reverse-lookup who depends on a server's capabilities — for an
+    **informational** impact warning before disable / delete (never blocks).
+
+    For each capability tool name (``{server.code}__{capability_name}``):
+      - ``bound_by``    : names of agents whose ``allowed_tools`` reference it
+      - ``authorizations``: count of active authorization rows
+
+    Only capabilities that are actually bound or authorized are returned.
+    """
+    from app.models import AgentDefinition, MCPCapabilityAuthorization
+
+    caps_q = db.query(MCPCapability).filter(MCPCapability.server_id == server.id)
+    if capability_names is not None:
+        caps_q = caps_q.filter(MCPCapability.capability_name.in_(capability_names))
+    caps = caps_q.all()
+    prefix = f"{server.code}__"
+    by_tool = {f"{prefix}{c.capability_name}": c for c in caps}
+
+    bound: dict[str, set] = {tn: set() for tn in by_tool}
+    agents = (
+        db.query(AgentDefinition.name, AgentDefinition.allowed_tools)
+        .filter(AgentDefinition.allowed_tools.isnot(None))
+        .all()
+    )
+    for name, allowed in agents:
+        if not allowed:
+            continue
+        for t in allowed:
+            if t in bound:
+                bound[t].add(name)
+
+    rows = (
+        db.query(MCPCapabilityAuthorization.mcp_capability_id, func.count())
+        .filter(
+            MCPCapabilityAuthorization.mcp_server_id == server.id,
+            MCPCapabilityAuthorization.deleted_at.is_(None),
+        )
+        .group_by(MCPCapabilityAuthorization.mcp_capability_id)
+        .all()
+    )
+    authz_by_cap = {cid: int(n) for cid, n in rows}
+
+    items = []
+    for tn, cap in by_tool.items():
+        agents_bound = sorted(bound.get(tn, ()))
+        n_authz = authz_by_cap.get(cap.id, 0)
+        if agents_bound or n_authz:
+            items.append({
+                "tool": tn,
+                "capability_name": cap.capability_name,
+                "status": cap.status,
+                "bound_by": agents_bound,
+                "authorizations": n_authz,
+            })
+    return {
+        "server_code": server.code,
+        "in_use": items,
+        "agents": sorted({a for it in items for a in it["bound_by"]}),
+        "total_authorizations": sum(it["authorizations"] for it in items),
+    }
 
 
 # ─── Test-invoke + call-log sanitization ──────────────────────────────

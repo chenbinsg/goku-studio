@@ -115,13 +115,86 @@ def _delete_existing(db: Session, server_code: str) -> int:
     return len(rows)
 
 
+_INDEX_SOURCE = "mcp:_index"
+
+
+def refresh_server_index(db: Session) -> int:
+    """Rebuild the single 'available MCP services' overview doc, so ANY agent
+    (via knowledge_search) can enumerate ALL usable MCP servers + their capability
+    counts in one shot. Real-time: rebuilt on every server change.
+    Returns the number of servers listed."""
+    from app.services import embedding as emb_svc, vector_store
+
+    try:
+        old = db.query(models.KnowledgeDoc).filter(models.KnowledgeDoc.source == _INDEX_SOURCE).all()
+        vids = [r.vector_id for r in old if r.vector_id]
+        if vids:
+            try:
+                vector_store.delete_many(vids)
+            except Exception:
+                pass
+        for r in old:
+            db.delete(r)
+        db.flush()
+
+        servers = (
+            db.query(models.MCPServer)
+            .filter(models.MCPServer.deleted_at.is_(None), models.MCPServer.status == "enabled")
+            .order_by(models.MCPServer.name)
+            .all()
+        )
+        head = (
+            f"# 可用的 MCP 服务总览（共 {len(servers)} 个）\n\n"
+            "> 本文档列出当前平台**全部可用的 MCP 服务（服务器）及其能力数**，由系统按 MCP 服务变化"
+            "实时维护。回答“有哪些 MCP 服务 / 哪些 MCP 服务器可用 / 列出全部 MCP 服务 / 能用哪些 MCP”"
+            "这类问题时，**以本清单为准**（每个服务的具体能力见各自的「MCP 能力目录」）。\n"
+        )
+        rows = []
+        for s in servers:
+            cap_n = (
+                db.query(models.MCPCapability)
+                .filter(models.MCPCapability.server_id == s.id, models.MCPCapability.status == "active")
+                .count()
+            )
+            desc = (s.description or "").strip().replace("\n", " ")
+            rows.append(
+                f"- **{s.name}**（`{s.code}`）— 类别 {s.service_category or '-'}，"
+                f"{cap_n} 个能力，健康 {s.health_status or '-'}。{desc}"
+            )
+        content = head + "\n" + ("\n".join(rows) if rows else "（当前没有可用的 MCP 服务）")
+        title = "可用的 MCP 服务总览（全部 MCP 服务器清单）"
+
+        doc_id = str(uuid.uuid4())
+        vector = emb_svc.get_embedding(content[:8000])
+        vid = vector_store.upsert(
+            memory_id=doc_id, vector=vector,
+            payload={"title": title, "source": _INDEX_SOURCE, "type": "knowledge"},
+        )
+        db.add(models.KnowledgeDoc(
+            id=doc_id, title=title, content=content, source=_INDEX_SOURCE,
+            tags=["mcp", "index", "服务总览", "可用服务"], vector_id=vid, tenant_id=None,
+        ))
+        db.commit()
+        logger.info("mcp_knowledge: refreshed MCP service index — %d servers", len(servers))
+        return len(servers)
+    except Exception as e:
+        logger.warning("mcp_knowledge: service index refresh failed: %s", e)
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return 0
+
+
 def purge_server_knowledge(db: Session, server: models.MCPServer) -> int:
-    """Remove all knowledge for ``server`` (doc + chunks + vectors). Idempotent."""
+    """Remove all knowledge for ``server`` (doc + chunks + vectors), and rebuild
+    the service overview. Idempotent."""
     try:
         removed = _delete_existing(db, server.code)
         db.commit()
         if removed:
             logger.info("mcp_knowledge: purged %d rows for %s", removed, _source_key(server.code))
+        refresh_server_index(db)
         return removed
     except Exception as e:
         logger.warning("mcp_knowledge: purge failed for %s: %s", server.code, e)
@@ -133,6 +206,15 @@ def purge_server_knowledge(db: Session, server: models.MCPServer) -> int:
 
 
 def refresh_server_knowledge(db: Session, server: models.MCPServer) -> int:
+    """Rebuild this server's per-capability catalog AND the global service-overview
+    doc (both real-time → any agent can discover available MCP services + their
+    capabilities via knowledge_search). Returns docs written for this server."""
+    n = _refresh_server_doc(db, server)
+    refresh_server_index(db)
+    return n
+
+
+def _refresh_server_doc(db: Session, server: models.MCPServer) -> int:
     """Rebuild the server's knowledge doc from its **active** capabilities.
 
     Always purges first (idempotent). Rebuilds only when the server is
