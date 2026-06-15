@@ -2,12 +2,20 @@ name: goku-studio CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, cicd]
   pull_request:
     branches: [main]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
+  DOCKER_METADATA_SHORT_SHA_LENGTH: 7
   # Fake URL — models import without a real DB connection
   DATABASE_URL: mysql+pymysql://ci:ci@localhost:3306/goku_studio_ci
   # Keep this intentionally short. Some auth imports exercise bcrypt/passlib,
@@ -95,3 +103,108 @@ jobs:
       - name: Studio boundary test (no Core runtime imports)
         working-directory: backend
         run: pytest tests/test_studio_boundary.py::test_studio_routers_do_not_import_core_runtime -v
+
+  # ── Build and publish container images ────────────────────────────────────
+  build-images:
+    name: Build Container Images
+    needs: [test, lint, boundary]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: gcr.io
+          username: _json_key
+          password: ${{ secrets.GCR_JSON_KEY }}
+
+      - name: Extract backend image metadata
+        id: backend_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: gcr.io/sre-common-test-379805/aios/goku-studio
+          tags: type=sha,prefix=sha-,format=short
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: backend
+          file: backend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.backend_meta.outputs.tags }}
+          labels: ${{ steps.backend_meta.outputs.labels }}
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+
+      - name: Extract frontend image metadata
+        id: frontend_meta
+        uses: docker/metadata-action@v5
+        with:
+          images: gcr.io/sre-common-test-379805/aios/goku-studio-frontend
+          tags: type=sha,prefix=sha-,format=short
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.frontend_meta.outputs.tags }}
+          labels: ${{ steps.frontend_meta.outputs.labels }}
+          build-args: |
+            AIOS_VERSION=sha-${{ github.sha }}
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,mode=max,scope=frontend
+
+  # ── Keep deployment manifests pinned to the published images ─────────────
+  update-deployment:
+    name: Update Deployment Images
+    needs: build-images
+    if: github.event_name != 'pull_request' && github.ref_type == 'branch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve deployment image tag
+        id: deploy_tag
+        shell: bash
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
+      - name: Update deployment images
+        shell: bash
+        env:
+          BACKEND_IMAGE: gcr.io/sre-common-test-379805/aios/goku-studio
+          FRONTEND_IMAGE: gcr.io/sre-common-test-379805/aios/goku-studio-frontend
+          IMAGE_TAG: ${{ steps.deploy_tag.outputs.tag }}
+        run: |
+          sed -i -E "s|^([[:space:]]*image:[[:space:]]*).*$|\1\"${BACKEND_IMAGE}:${IMAGE_TAG}\"|" deploy/backend.yaml
+          sed -i -E "s|^([[:space:]]*image:[[:space:]]*).*$|\1\"${FRONTEND_IMAGE}:${IMAGE_TAG}\"|" deploy/frontend.yaml
+          git diff --check
+          git diff -- deploy/backend.yaml deploy/frontend.yaml
+
+      - name: Commit deployment image updates
+        shell: bash
+        run: |
+          if git diff --quiet -- deploy/backend.yaml deploy/frontend.yaml; then
+            echo "No deployment image changes to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add deploy/backend.yaml deploy/frontend.yaml
+          git commit -m "Update deployment images to sha-${GITHUB_SHA::7} [skip ci]"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

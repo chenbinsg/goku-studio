@@ -20,5 +20,5 @@ spec:
       containers: 
         - 
           name: "goku-studio"
-          image: "275106820702.dkr.ecr.ap-northeast-1.amazonaws.com/cto/goku-studio:qa-202606121708-9458c6be"
+          image: "gcr.io/sre-common-test-379805/aios/goku-studio:sha-e82d8db"
 
