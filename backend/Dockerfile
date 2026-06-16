@@ -7,17 +7,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmagic1 curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install goku-shared (pinned release in production; local editable during dev)
-# COPY ../../packages/goku-shared /goku-shared
-# RUN pip install -e /goku-shared
-RUN pip install --no-cache-dir goku-shared==0.1.0
+# Install goku-shared
+COPY packages/goku-shared /goku-shared
+RUN pip install -e /goku-shared
 
 # Install Studio deps
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
-COPY . .
+COPY backend/ .
 
 ENV PORT=8107
 EXPOSE 8107
