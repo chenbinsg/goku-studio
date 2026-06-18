@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.5",
     "pydantic-settings>=2.1",
     "python-jose[cryptography]>=3.3",
+    "PyJWT>=2.8",
     "passlib[bcrypt]>=1.7",
     "pymysql>=1.1",
 ]
