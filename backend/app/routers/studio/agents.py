@@ -207,7 +207,25 @@ def list_base_types(user = Depends(get_current_user)):
 
 
 def _skills_root() -> Path:
-    return Path(__file__).resolve().parents[3] / "skills"
+    """Return the directory that holds skill definitions (``<id>/SKILL.md``).
+
+    Skills are owned by the goku-core runtime and live at ``goku/core/skills/``.
+    This Studio service is a sibling checkout of goku-core
+    (``…/goku/studio`` ↔ ``…/goku/core``), so by default we resolve to the
+    sibling ``core/skills``. In container deployments where goku-core's skills are
+    mounted elsewhere, set ``SKILLS_ROOT`` to point at that path.
+
+    NOTE on depth: this module lives at backend/app/routers/studio/agents.py, so
+    ``parents[4]`` is this repo's root (``…/goku/studio``) and ``parents[5]`` is
+    ``…/goku``. A previous bug used ``parents[3] / "skills"`` (→ nonexistent
+    ``backend/skills``), making _discover_skills() return [] and silently wiping
+    every agent's skills on save (see 海报设计师 incident, 2026-06-10).
+    """
+    import os
+    override = os.environ.get("SKILLS_ROOT")
+    if override:
+        return Path(override)
+    return Path(__file__).resolve().parents[5] / "core" / "skills"
 
 
 def _icons_root() -> Path:
@@ -407,6 +425,23 @@ def _discover_skills() -> list[dict]:
 
 def _valid_skill_ids() -> set[str]:
     return {skill["id"] for skill in _discover_skills()}
+
+
+def _filter_valid_skills(skills) -> list[str]:
+    """Filter submitted skill ids against the discoverable skill set — fail-safe.
+
+    If the skill directory is missing or misconfigured (empty valid set), return
+    the submitted ids UNCHANGED rather than wiping them. This Studio service does
+    not own the skill files (the goku-core runtime does), so an empty discovery
+    means "cannot validate here", not "all skills are invalid". Silently stripping
+    would destroy every agent's skill bindings on every save — exactly the
+    海报设计师 regression. Validation is best-effort; never destructive.
+    """
+    submitted = [s for s in (skills or []) if s]
+    valid = _valid_skill_ids()
+    if not valid:
+        return submitted
+    return [s for s in submitted if s in valid]
 
 
 def _filter_allowed_tools(tools, base_tools=None):
@@ -693,8 +728,7 @@ def create_agent(
     if data.allowed_tools is not None:
         data.allowed_tools = _filter_allowed_tools(data.allowed_tools, base["tools"])
     if data.skills is not None:
-        valid_skills = _valid_skill_ids()
-        data.skills = [s for s in data.skills if s in valid_skills]
+        data.skills = _filter_valid_skills(data.skills)
 
     # If the icon field holds an image path (starts with '/'), normalise: move it to
     # figure_url and reset icon to a sensible Ant Design name.  This prevents the
@@ -1050,9 +1084,7 @@ def import_agent(
         if db.query(AgentDefinition).filter(AgentDefinition.name == final_name).first():
             final_name = f"{name} (Imported {datetime.utcnow().strftime('%Y%m%d%H%M%S')})"
 
-    skills = agent_data.get("skills") or []
-    valid_skills = _valid_skill_ids()
-    skills = [s for s in skills if s in valid_skills]
+    skills = _filter_valid_skills(agent_data.get("skills") or [])
 
     allowed_tools = agent_data.get("allowed_tools")
     if allowed_tools is not None:
@@ -1137,8 +1169,7 @@ def update_agent(
     if data.system_prompt_override is not None:
         agent.system_prompt_override = data.system_prompt_override
     if data.skills is not None:
-        valid_skills = _valid_skill_ids()
-        agent.skills = [s for s in data.skills if s in valid_skills]
+        agent.skills = _filter_valid_skills(data.skills)
     if data.model_override is not None:
         agent.model_override = data.model_override
     if data.max_steps is not None:
