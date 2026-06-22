@@ -23,7 +23,7 @@ from app.routers.studio import router as studio_router  # type: ignore[import]
 
 app = FastAPI(
     title="Goku Studio API",
-    version="1.9.42",
+    version="1.9.43",
     description="AI application construction API — agents, workflows, tools, MCP, knowledge.",
 )
 
