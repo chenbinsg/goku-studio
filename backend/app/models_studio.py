@@ -40,6 +40,7 @@ class AgentDefinition(Base):
     color                  = Column(String(20),  nullable=True)
     department             = Column(String(100), nullable=True)
     division               = Column(String(100), nullable=True)
+    category               = Column(String(50),  nullable=True)
     figure_url             = Column(Text,        nullable=True)
     slug                   = Column(String(100), unique=True, nullable=True)
     name_i18n              = Column(JSON,        nullable=True)

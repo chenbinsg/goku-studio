@@ -25,7 +25,8 @@ import {
 } from '@ant-design/icons'
 import { connectorApi } from '@/api'
 import { useTranslation } from 'react-i18next'
-import { useNavigate } from 'react-router-dom'
+import { useAuthStore } from '../../../stores/auth'
+import { goToRuntime } from '../../../utils/runtimeBridge'
 
 const { Title, Text } = Typography
 const { TextArea } = Input
@@ -41,7 +42,7 @@ interface Connector {
 
 const ConnectorPage: React.FC = () => {
   const { t } = useTranslation()
-  const navigate = useNavigate()
+  const { token, refreshToken } = useAuthStore()
   const [connectors, setConnectors] = useState<Connector[]>([])
   const [loadingList, setLoadingList] = useState(false)
   const [sending, setSending] = useState(false)
@@ -170,7 +171,9 @@ const ConnectorPage: React.FC = () => {
                       whatsapp: 'whatsapp',
                     }
                     const section = sectionMap[c.name] || c.name
-                    navigate(`/system/connectors#section-${section}`)
+                    // /system/connectors lives in the Runtime app, not Studio —
+                    // bridge across instead of SPA-navigating (which 404s → /agents).
+                    goToRuntime(`/system/connectors#section-${section}`, token, refreshToken)
                   }}
                   type={c.configured ? 'default' : 'primary'}
                   style={{ marginTop: 4, width: '100%' }}
@@ -190,7 +193,7 @@ const ConnectorPage: React.FC = () => {
         description={
           <span>
             连接器的详细配置（API 密钥、Webhook URL、测试连接等）在
-            <Button type="link" style={{ padding: '0 4px' }} onClick={() => navigate('/system/connectors')}>
+            <Button type="link" style={{ padding: '0 4px' }} onClick={() => goToRuntime('/system/connectors', token, refreshToken)}>
               系统设置 → 消息连接器配置
             </Button>
             页面进行。

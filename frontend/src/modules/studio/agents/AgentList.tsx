@@ -63,6 +63,7 @@ interface AgentDefinition {
   agent_type_label: string
   department: string | null
   division?: string | null
+  category?: string | null
   figure_url: string | null
   system_prompt_override: string | null
   skills: string[] | null
@@ -432,6 +433,7 @@ const AgentList: React.FC = () => {
       agent_type: agent.agent_type,
       department: normalizeDepartment(agent.department, notGroupedLabel),
       division: agent.division || '',
+      category: agent.category || undefined,
       figure_url: agent.figure_url,
       system_prompt_override: agent.system_prompt_override,
       skills: agent.skills || [],
@@ -964,6 +966,22 @@ const AgentList: React.FC = () => {
                         options={[...new Set(agents.map(a => a.division).filter(Boolean))].map(d => ({ value: d as string }))}
                         allowClear
                       />
+                    </Form.Item>
+
+                    {/* ── Gallery category (智能体广场领域分类) ── */}
+                    <Form.Item
+                      label={t('agent_edit_form_category', '广场分类')}
+                      name="category"
+                      tooltip={t('agent_edit_form_category_tooltip', '决定该智能体在「智能体广场」中归入哪个领域分组')}
+                    >
+                      <Select allowClear placeholder={t('agent_edit_form_category_placeholder', '选择领域分类')} options={[
+                        { value: 'ir',          label: t('gallery_cat_ir', '投资者关系') },
+                        { value: 'design',      label: t('gallery_cat_design', '设计美工') },
+                        { value: 'agent_tools', label: t('gallery_cat_agent_tools', 'Agent 平台工具') },
+                        { value: 'support',     label: t('gallery_cat_support', '技术支持 / 售前') },
+                        { value: 'marketing',   label: t('gallery_cat_marketing', '营销增长') },
+                        { value: 'general',     label: t('gallery_cat_general', '通用探索') },
+                      ]} />
                     </Form.Item>
 
                     {/* ── Visibility ── */}
