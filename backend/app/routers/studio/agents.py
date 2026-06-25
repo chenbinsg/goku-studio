@@ -32,6 +32,7 @@ class AgentDefinitionCreate(BaseModel):
     agent_type: str
     department: str | None = None
     division: str | None = None
+    category: str | None = None
     figure_url: str | None = None
     system_prompt_override: str | None = None
     skills: list[str] | None = None
@@ -58,6 +59,7 @@ class AgentDefinitionUpdate(BaseModel):
     description: str | None = None
     department: str | None = None
     division: str | None = None
+    category: str | None = None
     figure_url: str | None = None
     system_prompt_override: str | None = None
     skills: list[str] | None = None
@@ -354,6 +356,7 @@ def _build_export_payload(agent) -> dict:
             "description": agent.description,
             "agent_type": agent.agent_type,
             "department": agent.department,
+            "category": getattr(agent, "category", None),
             "figure_url": agent.figure_url,
             "system_prompt_override": agent.system_prompt_override,
             "skills": agent.skills or [],
@@ -616,6 +619,81 @@ def _agent_access_filter(query, user, db):
     return query
 
 
+def _user_principals(user, db):
+    """Return the list of (principal_type, principal_id) pairs identifying a user
+    for agent_access_policies resolution: self, team, each department, tenant."""
+    from app.models import UserDepartment
+
+    user_depts = [ud.department for ud in db.query(UserDepartment).filter(
+        UserDepartment.user_id == user.id).all()]
+    if not user_depts:
+        legacy = getattr(user, "department", None)
+        if legacy:
+            user_depts = [legacy]
+
+    principals = [("user", user.id)]
+    if getattr(user, "team_id", None):
+        principals.append(("team", user.team_id))
+    for dept in user_depts:
+        principals.append(("department", dept))
+    if getattr(user, "tenant_id", None):
+        principals.append(("tenant", user.tenant_id))
+    return principals
+
+
+def _policy_flag_sets(agent_ids, user, db):
+    """Batch-resolve which of the given agents grant can_use / can_config to the
+    user via an active policy. Returns (use_set, config_set)."""
+    from datetime import datetime as _dt
+
+    from sqlalchemy import and_, or_
+
+    from app.models import AgentAccessPolicy
+
+    use_set: set[str] = set()
+    config_set: set[str] = set()
+    if not agent_ids:
+        return use_set, config_set
+
+    now = _dt.utcnow()
+    principal_clauses = [
+        and_(AgentAccessPolicy.principal_type == ptype,
+             AgentAccessPolicy.principal_id == pid)
+        for ptype, pid in _user_principals(user, db)
+    ]
+    rows = db.query(
+        AgentAccessPolicy.agent_id,
+        AgentAccessPolicy.can_use,
+        AgentAccessPolicy.can_config,
+    ).filter(
+        AgentAccessPolicy.agent_id.in_(agent_ids),
+        or_(*principal_clauses),
+        or_(AgentAccessPolicy.expires_at.is_(None),
+            AgentAccessPolicy.expires_at > now),
+    ).all()
+    for aid, can_use, can_config in rows:
+        if can_use:
+            use_set.add(aid)
+        if can_config:
+            config_set.add(aid)
+    return use_set, config_set
+
+
+def _user_can_config(user, agent, db) -> bool:
+    """Whether the user may edit/delete this agent.
+
+    True for superusers, the agent's creator, or any user holding an active
+    policy with can_config=True via self / team / department / tenant. This is
+    the enforcement counterpart to the can_config field — the gallery exposes
+    agents for use, but editing stays gated here (see DefaultDeny model)."""
+    if getattr(user, "is_superuser", False):
+        return True
+    if getattr(agent, "user_id", None) and agent.user_id == user.id:
+        return True
+    _, config_set = _policy_flag_sets([agent.id], user, db)
+    return agent.id in config_set
+
+
 @router.get("")
 def list_agents(
     page: int = 1,
@@ -646,10 +724,22 @@ def list_agents(
     fav_set = {f.agent_id for f in db.query(UserAgentFavorite).filter(
         UserAgentFavorite.user_id == user.id).all()}
 
+    # Resolve per-user can_use / can_config flags (for the agent gallery) in one
+    # batch query rather than N policy lookups.
+    is_super = bool(getattr(user, "is_superuser", False))
+    use_set, config_set = (set(), set()) if is_super else _policy_flag_sets(
+        [a.id for a in items], user, db)
+
     result = []
     for a in items:
         s = _serialize(a)
         s['is_favorite'] = a.id in fav_set
+        is_creator = bool(a.user_id) and a.user_id == user.id
+        # Legacy visibility (public/department/role) granted full use; only the
+        # policy layer introduces view-only. Private agents rely on a use grant.
+        legacy_usable = (s.get('visibility') in ('public', 'department', 'role_based'))
+        s['can_use'] = is_super or is_creator or legacy_usable or a.id in use_set
+        s['can_config'] = is_super or is_creator or a.id in config_set
         result.append(s)
 
     return {"total": total, "items": result}
@@ -765,6 +855,7 @@ def create_agent(
         agent_type=data.agent_type,
         department=data.department,
         division=data.division,
+        category=data.category,
         figure_url=persisted_figure_url,
         system_prompt_override=data.system_prompt_override,
         skills=data.skills,
@@ -976,7 +1067,8 @@ def get_agent(
     user = Depends(get_current_user),
 ):
     from app.models import AgentDefinition
-    agent = db.query(AgentDefinition).filter(AgentDefinition.id == agent_id).first()
+    q = db.query(AgentDefinition).filter(AgentDefinition.id == agent_id)
+    agent = _agent_access_filter(q, user, db).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
     return _serialize(agent)
@@ -992,6 +1084,9 @@ def export_agent(
     agent = db.query(AgentDefinition).filter(AgentDefinition.id == agent_id).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    # Export yields the full editable seed JSON (system prompt, tools) — config-level.
+    if not _user_can_config(user, agent, db):
+        raise HTTPException(status_code=403, detail="No export permission for this agent")
     payload = _build_export_payload(agent)
     filename = f"{_slugify_filename(agent.name)}.agent.json"
     auth.log_audit_action(db, user.id, "export_agent", "agent", agent.id, {"name": agent.name})
@@ -1016,6 +1111,14 @@ def export_agents_batch(
         raise HTTPException(status_code=400, detail="agent_ids is required")
 
     agents = db.query(AgentDefinition).filter(AgentDefinition.id.in_(agent_ids)).all()
+    if not agents:
+        raise HTTPException(status_code=404, detail="No matching agents found")
+
+    # Restrict to agents the caller may configure — export reveals the editable
+    # definition (system prompt, tools), so it is gated at config level.
+    if not bool(getattr(user, "is_superuser", False)):
+        _, config_set = _policy_flag_sets([a.id for a in agents], user, db)
+        agents = [a for a in agents if (a.user_id and a.user_id == user.id) or a.id in config_set]
     if not agents:
         raise HTTPException(status_code=404, detail="No matching agents found")
 
@@ -1116,6 +1219,7 @@ def import_agent(
         description=agent_data.get("description"),
         agent_type=agent_type,
         department=agent_data.get("department"),
+        category=agent_data.get("category"),
         figure_url=figure_url,
         system_prompt_override=agent_data.get("system_prompt_override"),
         skills=skills,
@@ -1153,6 +1257,8 @@ def update_agent(
     agent = db.query(AgentDefinition).filter(AgentDefinition.id == agent_id).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if not _user_can_config(user, agent, db):
+        raise HTTPException(status_code=403, detail="No edit permission for this agent")
 
     if data.name is not None:
         agent.name = data.name
@@ -1162,6 +1268,8 @@ def update_agent(
         agent.department = data.department
     if data.division is not None:
         agent.division = data.division
+    if data.category is not None:
+        agent.category = data.category
     if getattr(data, "visibility", None) is not None:
         agent.visibility = data.visibility
     if getattr(data, "allowed_roles", None) is not None:
@@ -1224,6 +1332,8 @@ def delete_agent(
     agent = db.query(AgentDefinition).filter(AgentDefinition.id == agent_id).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if not _user_can_config(user, agent, db):
+        raise HTTPException(status_code=403, detail="No delete permission for this agent")
     agent_name = agent.name
     agent_slug = getattr(agent, "slug", None)
     auth.log_audit_action(db, user.id, "delete_agent", "agent", agent.id, {"name": agent_name})
@@ -1284,6 +1394,7 @@ def _write_agent_seed(agent) -> None:
             "display_name": agent.display_name,
             "division": getattr(agent, "division", None),
             "department": agent.department,
+            "category": getattr(agent, "category", None),
             "visibility": getattr(agent, "visibility", None) or "department",
             "allowed_roles": getattr(agent, "allowed_roles", None) or [],
             "created_at": agent.created_at.isoformat() if agent.created_at else None,
@@ -1366,6 +1477,8 @@ def update_agent_email_config(
     agent = db.query(AgentDefinition).filter(AgentDefinition.id == agent_id).first()
     if not agent:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if not _user_can_config(user, agent, db):
+        raise HTTPException(status_code=403, detail="No edit permission for this agent")
 
     slug = agent.slug or agent.id
     key  = f"{_EMAIL_CONFIG_KEY_PREFIX}{slug}"
@@ -1407,6 +1520,7 @@ def _serialize(agent) -> dict:
         "agent_type_label": base.get("label", agent.agent_type),
         "department": agent.department,
         "division": agent.division,
+        "category": getattr(agent, "category", None),
         "figure_url": agent.figure_url,
         "system_prompt_override": agent.system_prompt_override,
         "skills": agent.skills,

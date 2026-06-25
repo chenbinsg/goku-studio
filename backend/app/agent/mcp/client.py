@@ -16,6 +16,28 @@ from app.agent.mcp.config import MCPServerConfig
 logger = logging.getLogger(__name__)
 
 
+def _mcp_loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
+    """Custom exception handler for the MCP background event loop.
+
+    Suppresses two classes of noise that arise from the anyio/streamablehttp_client
+    incompatibility when a 4xx error interrupts an MCP task group:
+
+    1. RuntimeError 'cancel scope in a different task' — the transport is dead;
+       nothing to recover.
+    2. 'Task exception was never retrieved' on async_generator_athrow tasks —
+       Python GC trying to finalise abandoned async generators from a failed
+       streamablehttp_client context manager. Without suppression these pile up
+       and spin the event loop, causing CPU to spike.
+    """
+    exc = context.get("exception")
+    if isinstance(exc, RuntimeError) and "cancel scope" in str(exc):
+        return
+    future_repr = str(context.get("future", ""))
+    if "async_generator_athrow" in future_repr:
+        return
+    loop.default_exception_handler(context)
+
+
 class MCPServerConnection:
     """Manages a single MCP server connection (async internals)."""
 
@@ -141,14 +163,32 @@ class MCPServerConnection:
 
     async def disconnect(self) -> None:
         """Disconnect from the MCP server."""
-        if self._exit_stack:
-            try:
-                await self._exit_stack.aclose()
-            except Exception as e:
-                logger.debug("Error during MCP disconnect: %s", e)
+        # Grab and null _exit_stack first to prevent double-close if this
+        # method is called again while cleanup is in progress.
+        exit_stack = self._exit_stack
+        self._exit_stack = None
         self.session = None
         self.connected = False
         self.capabilities = []
+
+        if exit_stack:
+            try:
+                await exit_stack.aclose()
+            except RuntimeError as e:
+                if "cancel scope" in str(e):
+                    # Known anyio/streamablehttp_client incompatibility: when a
+                    # 4xx/transport error occurs inside the MCP task group the
+                    # anyio cancel scope is torn down in the wrong asyncio task,
+                    # producing this error. The transport is already dead so
+                    # suppressing is safe — there is nothing to recover.
+                    logger.debug(
+                        "MCP disconnect '%s': suppressed anyio cancel scope cleanup error",
+                        self.config.name,
+                    )
+                else:
+                    logger.debug("MCP disconnect '%s': %s", self.config.name, e)
+            except Exception as e:
+                logger.debug("MCP disconnect '%s': %s", self.config.name, e)
 
 
 class MCPClientManager:
@@ -168,6 +208,7 @@ class MCPClientManager:
         """Get or create the dedicated background event loop."""
         if self._loop is None or self._loop.is_closed():
             self._loop = asyncio.new_event_loop()
+            self._loop.set_exception_handler(_mcp_loop_exception_handler)
             self._loop_thread = threading.Thread(
                 target=self._loop.run_forever, daemon=True, name="mcp-event-loop"
             )
