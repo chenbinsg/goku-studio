@@ -493,6 +493,7 @@
   "agent_edit_tools_group_mcp": "MCP 能力",
   "agent_edit_tools_group_directive": "指令（高级）",
   "agent_edit_tools_mcp_none_label": "@mcp:none — 严格模式：只用已勾选的工具，不自动带入全部 MCP 能力",
+  "agent_edit_tools_mcp_focus_label": "@mcp:focus — 数据源聚焦：池里有数据源型 MCP（含 list/describe 探查工具）时，隐藏 web_search/knowledge_search 等通用检索工具，避免绕开数据源",
   "agent_edit_form_model": "模型覆盖",
   "agent_edit_model_help": "留空使用全局默认模型",
   "agent_edit_form_max_steps": "最大步骤数",

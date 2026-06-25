@@ -1248,7 +1248,10 @@ const AgentList: React.FC = () => {
                               { label: t('agent_edit_tools_group_base'), options: baseList.map(toOpt) },
                               { label: t('agent_edit_tools_group_other'), options: other.map(x => toOpt(x.name)) },
                               { label: t('agent_edit_tools_group_mcp'), options: mcp.map(x => toOpt(x.name)) },
-                              { label: t('agent_edit_tools_group_directive'), options: [{ value: '@mcp:none', label: t('agent_edit_tools_mcp_none_label') }] },
+                              { label: t('agent_edit_tools_group_directive'), options: [
+                                { value: '@mcp:none', label: (<Tooltip title={t('agent_edit_tools_mcp_none_label')} placement="left"><span>@mcp:none</span></Tooltip>) },
+                                { value: '@mcp:focus', label: (<Tooltip title={t('agent_edit_tools_mcp_focus_label')} placement="left"><span>@mcp:focus</span></Tooltip>) },
+                              ] },
                             ]
                           })()}
                         />

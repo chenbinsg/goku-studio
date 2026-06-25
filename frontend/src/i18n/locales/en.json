@@ -493,6 +493,7 @@
   "agent_edit_tools_group_mcp": "MCP capabilities",
   "agent_edit_tools_group_directive": "Directives (advanced)",
   "agent_edit_tools_mcp_none_label": "@mcp:none — strict mode: only the selected tools, no auto-included MCP capabilities",
+  "agent_edit_tools_mcp_focus_label": "@mcp:focus — data-source focus: when a data-source MCP (with list/describe discovery tools) is in the pool, hide generic research tools (web_search/knowledge_search) so the model engages the data source instead",
   "agent_edit_form_model": "Model Override",
   "agent_edit_model_help": "Leave empty to use the global default model",
   "agent_edit_form_max_steps": "Max Steps",
