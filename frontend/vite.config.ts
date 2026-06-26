@@ -53,6 +53,13 @@ export default defineConfig({
         target: process.env.VITE_CORE_BACKEND_URL || "http://localhost:8106",
         changeOrigin: true,
       },
+      // Knowledge base (upload/search/CRUD) needs text extraction + embeddings + Qdrant,
+      // which only Core has — the Studio backend's knowledge router is a copy missing those
+      // services, so route the whole /knowledge surface to Core (same DB / KnowledgeDoc table).
+      "/api/v1/knowledge": {
+        target: process.env.VITE_CORE_BACKEND_URL || "http://localhost:8106",
+        changeOrigin: true,
+      },
 
       // ── Studio backend (8107) catch-all ─────────────────────────────────
       "/api": {
