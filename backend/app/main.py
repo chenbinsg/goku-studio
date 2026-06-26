@@ -17,6 +17,11 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+# Force JSON logging before importing anything that may log at import time.
+from app.logging_config import setup_logging
+
+setup_logging()
+
 # ── Lazy: only import Studio router + Studio models ───────────────────────────
 # This import boundary is the whole point of the extraction.
 from app.routers.studio import router as studio_router  # type: ignore[import]
