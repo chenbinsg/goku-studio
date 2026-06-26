@@ -40,6 +40,7 @@ def _workflow_query(db: Session):
             models.Workflow.triggers,
             models.Workflow.variables,
             models.Workflow.version,
+            models.Workflow.agent_id,
             models.Workflow.created_at,
         )
     )
@@ -178,6 +179,7 @@ def create_workflow(workflow_data: schemas.WorkflowCreate, db: Session = Depends
             triggers=stored_triggers,
             variables=workflow_data.variables,
             version=version,
+            agent_id=workflow_data.agent_id,
             created_at=created_at,
         )
     )
@@ -209,6 +211,7 @@ def get_workflow(
         "triggers": _sanitize_workflow_triggers(workflow.triggers),
         "variables": workflow.variables,
         "version": workflow.version,
+        "agent_id": workflow.agent_id,
         "created_at": workflow.created_at,
     }
 
@@ -369,6 +372,11 @@ def update_workflow(
         )
     if data.variables is not None:
         workflow.variables = data.variables
+    # Only touch agent binding when the client explicitly sends the field (so a DAG-only
+    # save doesn't unbind). Sending agent_id=null is a deliberate unbind.
+    _fields_set = getattr(data, "model_fields_set", None) or getattr(data, "__fields_set__", set())
+    if "agent_id" in _fields_set:
+        workflow.agent_id = data.agent_id
 
     workflow_pk = workflow.id
 
@@ -387,6 +395,7 @@ def update_workflow(
         "triggers": _sanitize_workflow_triggers(workflow.triggers),
         "variables": workflow.variables,
         "version": workflow.version,
+        "agent_id": workflow.agent_id,
         "created_at": workflow.created_at,
     }
 

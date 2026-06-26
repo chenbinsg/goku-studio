@@ -418,9 +418,9 @@ export const workflowApi = {
   list: (page = 1, size = 100) =>
     api.get<{ items: any[] }>('/workflows', { params: { page, size } }),
   get: (id: string) => api.get<any>(`/workflows/${id}`),
-  create: (data: { name: string; description?: string; dag: object; triggers?: any[]; variables?: object }) =>
+  create: (data: { name: string; description?: string; dag: object; triggers?: any[]; variables?: object; agent_id?: string | null }) =>
     api.post<{ workflow_id: string; version: string; created_at: string }>('/workflows', data),
-  update: (id: string, data: { name?: string; description?: string; dag?: object; triggers?: any[]; variables?: object }) =>
+  update: (id: string, data: { name?: string; description?: string; dag?: object; triggers?: any[]; variables?: object; agent_id?: string | null }) =>
     api.put<{ workflow_id: string; version: string; updated_at: string }>(`/workflows/${id}`, data),
   execute: (id: string, data?: { variables?: object; dry_run?: boolean }) =>
     api.post<{ execution_id: string; status: string; started_at: string }>(`/workflows/${id}/execute`, data),

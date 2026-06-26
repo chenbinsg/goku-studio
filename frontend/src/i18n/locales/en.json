@@ -1564,6 +1564,8 @@
   "workflow_designer_back": "Back",
   "workflow_designer_name_placeholder": "Workflow name",
   "workflow_designer_desc_placeholder": "Description (optional)",
+  "workflow_designer_bind_agent_placeholder": "Bind agent (optional)",
+  "workflow_designer_bind_agent_help": "Binds the workflow to an agent so the DAG can use {{report_recipients}} / {{report_sender_name}}",
   "workflow_designer_run": "Run",
   "workflow_designer_cancel_run": "Cancel",
   "workflow_designer_save": "Save",

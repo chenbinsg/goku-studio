@@ -1564,6 +1564,8 @@
   "workflow_designer_back": "返回",
   "workflow_designer_name_placeholder": "工作流名称",
   "workflow_designer_desc_placeholder": "描述（可选）",
+  "workflow_designer_bind_agent_placeholder": "绑定 Agent（可选）",
+  "workflow_designer_bind_agent_help": "把工作流绑定到 Agent，使 DAG 能使用 {{report_recipients}} / {{report_sender_name}}",
   "workflow_designer_run": "运行",
   "workflow_designer_cancel_run": "取消",
   "workflow_designer_save": "保存",

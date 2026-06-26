@@ -55,7 +55,7 @@ import {
   HolderOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { workflowApi, toolApi } from '@/api'
+import { workflowApi, toolApi, agentApi } from '@/api'
 import { useTranslation } from 'react-i18next'
 
 const { Text } = Typography
@@ -422,6 +422,8 @@ const WorkflowDesignerInner: React.FC = () => {
   const [edges, setEdges, onEdgesChange] = useEdgesState(defaultEdges)
   const [workflowName, setWorkflowName] = useState('')
   const [workflowDesc, setWorkflowDesc] = useState('')
+  const [workflowAgentId, setWorkflowAgentId] = useState<string | undefined>(undefined)
+  const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([])
   const [saving,   setSaving]   = useState(false)
   const [running,  setRunning]  = useState(false)
   const [loading,  setLoading]  = useState(false)
@@ -443,6 +445,14 @@ const WorkflowDesignerInner: React.FC = () => {
     toolApi.list().then((res: any) => {
       const tools = Array.isArray(res) ? res : (res?.tools || [])
       setAvailableTools(tools.map((t: any) => ({ name: t.name, description: t.description || '' })))
+    }).catch(() => {})
+  }, [])
+
+  // ── Load agents (for the workflow ↔ agent binding selector) ──────────────────
+  useEffect(() => {
+    agentApi.list({ size: 200, is_active: true }).then((res: any) => {
+      const items = res?.items || []
+      setAvailableAgents(items.map((a: any) => ({ id: a.id, name: a.name })))
     }).catch(() => {})
   }, [])
 
@@ -496,6 +506,7 @@ const WorkflowDesignerInner: React.FC = () => {
     workflowApi.get(workflowId).then((wf: any) => {
       setWorkflowName(wf.name || '')
       setWorkflowDesc(wf.description || '')
+      setWorkflowAgentId(wf.agent_id || undefined)
       if (wf.dag?.nodes?.length > 0) {
         const { nodes: rfNodes, edges: rfEdges } = dagToRf(wf.dag as DagData)
         setNodes(rfNodes)
@@ -599,7 +610,7 @@ const WorkflowDesignerInner: React.FC = () => {
     setSaving(true)
     try {
       const dag     = rfToDag(nodes, edges)
-      const payload = { name: workflowName, description: workflowDesc, dag, triggers: [{ type: 'manual' }], variables: {} }
+      const payload = { name: workflowName, description: workflowDesc, dag, triggers: [{ type: 'manual' }], variables: {}, agent_id: workflowAgentId ?? null }
       if (savedWorkflowId.current) {
         await workflowApi.update(savedWorkflowId.current, payload)
         message.success(t('workflow_designer_save_success'))
@@ -819,6 +830,17 @@ const WorkflowDesignerInner: React.FC = () => {
           value={workflowDesc}
           onChange={(e) => setWorkflowDesc(e.target.value)}
           style={{ width: 280 }}
+        />
+        <Select
+          allowClear
+          showSearch
+          optionFilterProp="label"
+          placeholder={t('workflow_designer_bind_agent_placeholder')}
+          value={workflowAgentId}
+          onChange={(v) => setWorkflowAgentId(v)}
+          style={{ width: 220 }}
+          options={availableAgents.map((a) => ({ label: a.name, value: a.id }))}
+          title={t('workflow_designer_bind_agent_help')}
         />
         <div style={{ flex: 1 }} />
         {executionStatus && (

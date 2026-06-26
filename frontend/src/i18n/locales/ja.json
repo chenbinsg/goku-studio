@@ -1549,6 +1549,8 @@
   "workflow_designer_back": "戻る",
   "workflow_designer_name_placeholder": "ワークフロー名",
   "workflow_designer_desc_placeholder": "説明（任意）",
+  "workflow_designer_bind_agent_placeholder": "エージェントを紐付け（任意）",
+  "workflow_designer_bind_agent_help": "ワークフローをエージェントに紐付けると、DAG で {{report_recipients}} / {{report_sender_name}} が使えます",
   "workflow_designer_run": "実行",
   "workflow_designer_cancel_run": "キャンセル",
   "workflow_designer_save": "保存",

@@ -519,6 +519,7 @@ class WorkflowCreate(BaseModel):
     dag: dict[str, Any]
     triggers: list[dict[str, Any]] = Field(default_factory=list)
     variables: dict[str, Any] = Field(default_factory=dict)
+    agent_id: str | None = None  # bind to an agent so the DAG can use {{report_recipients}} / {{report_sender_name}}
 
 
 class WorkflowResponse(BaseModel):
