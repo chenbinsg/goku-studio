@@ -54,17 +54,109 @@ const WorkflowMonitor: React.FC = () => {
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, string>>({})
   const [selectedNode, setSelectedNode] = useState<any>(null)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [nodes, setNodes, onNodesChange] = useNodesState([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState([])
+  const [nodes, setNodes, onNodesChange] = useNodesState<any>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([])
   const sseRef = useRef<EventSource | null>(null)
 
-  const dagToReactFlow = useCallback((dag: any, statusMap: Record<string, string>) => {
-    const rfNodes = (dag?.nodes || []).map((node: any, i: number) => {
+  const dagToReactFlow = useCallback((dag: any, statusMap: Record<string, string>, nodeExecutions: any[] = []) => {
+    const dagNodes: any[] = dag?.nodes || []
+    const nodeById = new Map(dagNodes.map((node: any) => [node.id, node]))
+    const executionByNodeId = new Map(nodeExecutions.map((ne: any) => [ne.node_id, ne]))
+    const edgesByKey = new Map<string, any>()
+
+    ;(dag?.edges || []).forEach((edge: any) => {
+      if (!edge?.from || !edge?.to) return
+      edgesByKey.set(`${edge.from}->${edge.to}`, edge)
+    })
+    dagNodes.forEach((node: any) => {
+      ;(node.depends_on || []).forEach((sourceId: string) => {
+        edgesByKey.set(`${sourceId}->${node.id}`, { from: sourceId, to: node.id })
+      })
+    })
+
+    const graphEdges = Array.from(edgesByKey.values()).filter(
+      (edge: any) => nodeById.has(edge.from) && nodeById.has(edge.to),
+    )
+
+    const children = new Map<string, string[]>()
+    const inDegree = new Map<string, number>()
+    dagNodes.forEach((node: any) => {
+      children.set(node.id, [])
+      inDegree.set(node.id, 0)
+    })
+    graphEdges.forEach((edge: any) => {
+      children.get(edge.from)?.push(edge.to)
+      inDegree.set(edge.to, (inDegree.get(edge.to) || 0) + 1)
+    })
+
+    const labelOrder = (node: any) => {
+      const text = `${node?.data?.label || node?.label || node?.id || ''}`
+      const match = text.match(/[①-⑳]|\b(\d+)\b/)
+      if (!match) return Number.MAX_SAFE_INTEGER
+      const circled = '①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳'.indexOf(match[0])
+      return circled >= 0 ? circled + 1 : Number(match[1])
+    }
+
+    const compareNodes = (a: string, b: string) => {
+      const ea = executionByNodeId.get(a) as any
+      const eb = executionByNodeId.get(b) as any
+      const layerDelta = (ea?.layer_index ?? 9999) - (eb?.layer_index ?? 9999)
+      if (layerDelta !== 0) return layerDelta
+      const startA = ea?.started_at ? Date.parse(ea.started_at) : Number.MAX_SAFE_INTEGER
+      const startB = eb?.started_at ? Date.parse(eb.started_at) : Number.MAX_SAFE_INTEGER
+      if (startA !== startB) return startA - startB
+      const labelDelta = labelOrder(nodeById.get(a)) - labelOrder(nodeById.get(b))
+      if (labelDelta !== 0) return labelDelta
+      return a.localeCompare(b)
+    }
+
+    const layers: string[][] = []
+    let queue = dagNodes
+      .filter((node: any) => (inDegree.get(node.id) || 0) === 0)
+      .map((node: any) => node.id)
+      .sort(compareNodes)
+    const seen = new Set<string>()
+
+    while (queue.length > 0) {
+      layers.push(queue)
+      queue.forEach((id) => seen.add(id))
+      const next: string[] = []
+      queue.forEach((id) => {
+        ;(children.get(id) || []).forEach((childId) => {
+          inDegree.set(childId, (inDegree.get(childId) || 0) - 1)
+          if ((inDegree.get(childId) || 0) === 0) next.push(childId)
+        })
+      })
+      queue = Array.from(new Set(next)).sort(compareNodes)
+    }
+
+    const leftovers = dagNodes
+      .map((node: any) => node.id)
+      .filter((id: string) => !seen.has(id))
+      .sort(compareNodes)
+    if (leftovers.length) layers.push(leftovers)
+
+    const positioned = new Map<string, { x: number; y: number }>()
+    const columnGap = 310
+    const rowGap = 170
+    const minX = 80
+    const centerY = 220
+    layers.forEach((layer, layerIndex) => {
+      const startY = centerY - ((layer.length - 1) * rowGap) / 2
+      layer.forEach((id, rowIndex) => {
+        positioned.set(id, {
+          x: minX + layerIndex * columnGap,
+          y: Math.max(40, startY + rowIndex * rowGap),
+        })
+      })
+    })
+
+    const rfNodes = dagNodes.map((node: any, i: number) => {
       const status = statusMap[node.id] || 'pending'
       const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.pending
       return {
         id: node.id,
-        position: node.position || { x: i * 200, y: 100 },
+        position: positioned.get(node.id) || { x: i * columnGap, y: centerY },
         data: {
           label: (
             <div style={{ textAlign: 'center', padding: '4px 8px' }}>
@@ -81,38 +173,21 @@ const WorkflowMonitor: React.FC = () => {
           border: `2px solid ${cfg.color}`,
           borderRadius: 8,
           padding: 8,
-          minWidth: 120,
+          width: 230,
+          minHeight: 92,
           boxShadow:
             status === 'running' ? `0 0 12px ${cfg.color}66` : '0 2px 8px rgba(0,0,0,0.08)',
         },
       }
     })
 
-    const rfEdges = (dag?.edges || []).map((edge: any) => ({
+    const rfEdges = graphEdges.map((edge: any) => ({
       id: `e-${edge.from}-${edge.to}`,
       source: edge.from,
       target: edge.to,
       markerEnd: { type: MarkerType.ArrowClosed },
       style: { stroke: '#aaa' },
     }))
-
-    if (!dag?.edges && dag?.nodes) {
-      const extraEdges: any[] = []
-      dag.nodes.forEach((node: any) => {
-        if (node.depends_on) {
-          node.depends_on.forEach((sourceId: string) => {
-            extraEdges.push({
-              id: `e-${sourceId}-${node.id}`,
-              source: sourceId,
-              target: node.id,
-              markerEnd: { type: MarkerType.ArrowClosed },
-              style: { stroke: '#aaa' },
-            })
-          })
-        }
-      })
-      return { rfNodes, rfEdges: extraEdges }
-    }
 
     return { rfNodes, rfEdges }
   }, [t])
@@ -149,10 +224,10 @@ const WorkflowMonitor: React.FC = () => {
   useEffect(() => {
     if (!workflow?.dag && !execution) return
     const dag = workflow?.dag || {}
-    const { rfNodes, rfEdges } = dagToReactFlow(dag, nodeStatuses)
+    const { rfNodes, rfEdges } = dagToReactFlow(dag, nodeStatuses, execution?.node_executions || [])
     setNodes(rfNodes)
     setEdges(rfEdges)
-  }, [workflow, nodeStatuses, setNodes, setEdges, dagToReactFlow])
+  }, [workflow, execution, nodeStatuses, setNodes, setEdges, dagToReactFlow])
 
   useEffect(() => {
     if (!workflowId || !execId) return
