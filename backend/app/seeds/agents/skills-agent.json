@@ -1,6 +1,6 @@
 {
   "id": "5c3effaf-6529-4084-93c3-4668be7869aa",
-  "name": "技能库管理专家",
+  "name": "SKILLS管理员",
   "slug": "skills-agent",
   "agent_type": "knowledge_agent",
   "description": "Goku Skills Library 的守门人与向导。负责技能发现推荐、新技能编写指导、质量审计、Agent 技能配置建议，以及技能库全局管理。",
@@ -36,12 +36,13 @@
   },
   "icon": "DeploymentUnitOutlined",
   "color": "#7c3aed",
-  "figure_url": "/icons/cda3a707-bda5-4984-a2b9-1f5268eb5ee2.svg",
+  "figure_url": "/icons/agent-skill-lib-avatar-v1.svg",
   "display_name": "Skills Agent",
   "division": "产品技术本部",
   "department": "CTO Office",
+  "category": "agent_tools",
   "visibility": "global",
   "allowed_roles": [],
   "created_at": "2026-06-09T05:27:50",
-  "updated_at": "2026-06-09T12:24:14"
+  "updated_at": "2026-06-28T11:42:01"
 }
