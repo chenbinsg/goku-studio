@@ -44,6 +44,17 @@ export default defineConfig({
         target: process.env.VITE_CORE_BACKEND_URL || "http://localhost:8106",
         changeOrigin: true,
       },
+      // Org teams + users live on Core (canonical user/team tables). Studio backend
+      // has no /org/teams or /users router (404), which broke principal-name
+      // resolution in the access-policy table. Route both to Core.
+      "/api/v1/org/teams": {
+        target: process.env.VITE_CORE_BACKEND_URL || "http://localhost:8106",
+        changeOrigin: true,
+      },
+      "/api/v1/users": {
+        target: process.env.VITE_CORE_BACKEND_URL || "http://localhost:8106",
+        changeOrigin: true,
+      },
       // Agent avatars: /icons static mount and uploaded figures both live on Core
       "/icons": {
         target: process.env.VITE_CORE_BACKEND_URL || "http://localhost:8106",

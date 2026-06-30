@@ -215,6 +215,24 @@ const AgentList: React.FC = () => {
   const [policyTeams, setPolicyTeams] = useState<any[]>([])
   const [policyUsers, setPolicyUsers] = useState<any[]>([])
   const [policyForm] = Form.useForm()
+
+  // Resolve a policy principal_id to a human-readable name using the same lists
+  // that back the "add policy" dropdowns. Falls back to the raw id if unresolved
+  // (e.g. tenant principals, or a list that hasn't loaded yet).
+  const principalName = (p: any): string => {
+    const id = p?.principal_id || ''
+    if (p?.principal_type === 'user') {
+      const u = policyUsers.find((x: any) => x.id === id)
+      if (u) return u.username || u.email || id
+    } else if (p?.principal_type === 'team') {
+      const t = policyTeams.find((x: any) => x.id === id)
+      if (t) return t.name || id
+    } else if (p?.principal_type === 'department') {
+      const d = policyDepts.find((x: any) => x.id === id)
+      if (d) return d.name || id
+    }
+    return id
+  }
   const [collapsedDivisions, setCollapsedDivisions] = useState<Record<string, boolean>>(() => {
     try {
       return JSON.parse(window.localStorage.getItem(DIVISION_STATE_KEY) || '{}')
@@ -470,11 +488,30 @@ const AgentList: React.FC = () => {
     setModalVisible(true)
   }
 
+  // Load the user/team/department directories that back both the "add policy"
+  // dropdowns and the readable-name resolution in the policies table.
+  const loadPrincipalDirectories = async () => {
+    // Load each directory INDEPENDENTLY — one failing endpoint must not blank the
+    // others. (e.g. /org/teams or /users returning 404 would otherwise reject a
+    // Promise.all and wipe the departments list too, leaving every principal as a
+    // raw UUID.) Each list is set only if its own call succeeds.
+    const [deptRes, teamRes, userRes] = await Promise.allSettled([
+      departmentApi.list(),
+      orgTeamsApi.list({ active_only: true }),
+      api.get<{ items: any[] }>('/users', { params: { page: 1, size: 200 } }),
+    ])
+    if (deptRes.status === 'fulfilled') setPolicyDepts(deptRes.value.items || [])
+    if (teamRes.status === 'fulfilled') setPolicyTeams(teamRes.value.items || [])
+    if (userRes.status === 'fulfilled') setPolicyUsers((userRes.value as any).items || [])
+  }
+
   const fetchPolicies = async (agentId: string) => {
     setPoliciesLoading(true)
     try {
       const res = await agentPoliciesApi.list(agentId)
       setPolicies(res.items || [])
+      // Resolve principal names eagerly so the table shows them on first view.
+      void loadPrincipalDirectories()
     } catch {
       // non-critical — user may not be admin
     } finally {
@@ -483,17 +520,7 @@ const AgentList: React.FC = () => {
   }
 
   const openPolicyGrant = async () => {
-    try {
-      const [deptRes, teamRes, userRes] = await Promise.all([
-        departmentApi.list(),
-        orgTeamsApi.list({ active_only: true }),
-        // Use agentApi itself, not userApi — avoid circular import concern
-        api.get<{ items: any[] }>('/users', { params: { page: 1, size: 200 } }),
-      ])
-      setPolicyDepts(deptRes.items || [])
-      setPolicyTeams(teamRes.items || [])
-      setPolicyUsers((userRes as any).items || [])
-    } catch {/* ignore */}
+    await loadPrincipalDirectories()
     policyForm.resetFields()
     setPolicyGrantOpen(true)
   }
@@ -1459,8 +1486,23 @@ const AgentList: React.FC = () => {
                                      p.principal_type === 'department' ? <><ApartmentOutlined /> 部门</> : '租户'}
                                   </Tag>
                                 </td>
-                                <td style={{ padding: '6px 8px', fontFamily: 'monospace', fontSize: 11 }}>
-                                  {p.principal_id.slice(0, 8)}…
+                                <td style={{ padding: '6px 8px' }}>
+                                  {(() => {
+                                    const name = principalName(p)
+                                    const resolved = name !== p.principal_id
+                                    return resolved ? (
+                                      <span title={p.principal_id}>
+                                        <span style={{ fontWeight: 500 }}>{name}</span>
+                                        <span style={{ fontFamily: 'monospace', fontSize: 11, color: '#bbb', marginLeft: 6 }}>
+                                          {p.principal_id.slice(0, 8)}…
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      <span style={{ fontFamily: 'monospace', fontSize: 11 }} title={p.principal_id}>
+                                        {p.principal_id.slice(0, 8)}…
+                                      </span>
+                                    )
+                                  })()}
                                 </td>
                                 <td style={{ padding: '6px 8px', textAlign: 'center' }}>
                                   <Tag color={p.can_view ? 'green' : 'default'}>{p.can_view ? '✓' : '✗'}</Tag>
