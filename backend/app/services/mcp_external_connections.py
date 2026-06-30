@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 from app import auth as _auth
 from app.models import MCPExternalConnection
 from app.services.encryption import (
-    MASK_DISPLAY,
+    MASK_DISPLAY, SecretKeyMissing,
     decrypt_secret, encrypt_secret, looks_like_mask, mask_secret,
 )
 
@@ -46,6 +46,7 @@ ERR_TEST_FAILED = "MCP_CONNECTION_TEST_FAILED"
 ERR_SCOPE_DENIED = "MCP_CONNECTION_SCOPE_DENIED"
 ERR_SECRET_MISSING = "MCP_CONNECTION_SECRET_MISSING"
 ERR_CONFIG_INVALID = "MCP_CONNECTION_CONFIG_INVALID"
+ERR_SECRET_KEY_MISSING = "MCP_CONNECTION_SECRET_KEY_MISSING"
 
 _AUDIT_TYPE = "mcp_external_connection"
 
@@ -81,6 +82,20 @@ def _encrypt_secret_dict(
             continue
         out[key] = encrypt_secret(str(value))
     return out
+
+
+def _secret_key_http_error(exc: SecretKeyMissing) -> HTTPException:
+    logger.error("MCP external connection secret encryption is not configured: %s", exc)
+    return HTTPException(
+        status_code=500,
+        detail={
+            "code": ERR_SECRET_KEY_MISSING,
+            "message": (
+                "MCP external connection secrets cannot be saved because "
+                "GOKU_SECRET_KEY is missing or invalid in the Studio backend environment."
+            ),
+        },
+    )
 
 
 def _mask_secret_dict(secret: Optional[dict[str, Any]]) -> dict[str, str]:
@@ -234,6 +249,11 @@ def create_connection(
     if dup:
         raise HTTPException(409, f"connection code {payload.code!r} already exists")
 
+    try:
+        secret_json = _encrypt_secret_dict(payload.secret, None)
+    except SecretKeyMissing as exc:
+        raise _secret_key_http_error(exc) from exc
+
     conn = MCPExternalConnection(
         id=str(uuid.uuid4()),
         code=payload.code,
@@ -241,7 +261,7 @@ def create_connection(
         connection_type=payload.connection_type,
         enabled=payload.enabled,
         config_json=payload.config or {},
-        secret_json=_encrypt_secret_dict(payload.secret, None),
+        secret_json=secret_json,
         allowed_scopes_json=payload.allowed_scopes or {},
         test_status=None,
         created_by=user_id,
@@ -281,7 +301,10 @@ def update_connection(
         conn.allowed_scopes_json = payload.allowed_scopes
         changed.append("allowed_scopes")
     if payload.secret is not None:
-        conn.secret_json = _encrypt_secret_dict(payload.secret, conn.secret_json)
+        try:
+            conn.secret_json = _encrypt_secret_dict(payload.secret, conn.secret_json)
+        except SecretKeyMissing as exc:
+            raise _secret_key_http_error(exc) from exc
         changed.append("secret")
 
     if changed:
