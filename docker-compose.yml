@@ -18,11 +18,20 @@ services:
       ALLOWED_ORIGINS: "${ALLOWED_ORIGINS:-http://localhost:5106}"
       AGENT_WORKSPACE: /workspace
       PUBLIC_BASE_URL: "${PUBLIC_BASE_URL:-}"
+      # goku-core runtime API — MCP test/sync/refresh are proxied there.
+      # Inside a container "localhost" is the studio container itself, so this
+      # MUST point at wherever core actually runs, e.g.
+      #   core on the same host        → http://host.docker.internal:8106
+      #   core on another host / k8s   → http://<core-host-or-service>:8106
+      CORE_API_URL: "${CORE_API_URL:-http://host.docker.internal:8106}"
       # LLM (Studio uses LLM only for agent-config previews)
       OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
       OPENAI_BASE_URL: "${OPENAI_BASE_URL:-https://api.openai.com/v1}"
     volumes:
       - workspace_data:/workspace
+    # Make host.docker.internal resolve on Linux Docker (no-op on Mac/Win).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8107/health"]
