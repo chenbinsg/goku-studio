@@ -48,6 +48,7 @@ import { useTranslation } from 'react-i18next'
 import { useAuthStore } from '../stores/auth'
 import { useThemeStore } from '../stores/theme'
 import { usePermissions } from '../hooks/usePermissions'
+import LanguageSwitcher from './LanguageSwitcher'
 
 const { Sider, Content, Header } = AntLayout
 const { Text } = Typography
@@ -88,14 +89,14 @@ export default function StudioLayout() {
     {
       key: 'return',
       icon: <ArrowLeftOutlined />,
-      label: '返回 Runtime',
+      label: t('studio_return_runtime'),
       onClick: () => goToRuntime('/dashboard', token, refreshToken),
     },
     { type: 'divider' as const },
     {
       key: 'logout',
       icon: <LogoutOutlined />,
-      label: t('layout_logout_label', '退出登录'),
+      label: t('layout_logout'),
       onClick: handleLogout,
     },
   ]
@@ -104,61 +105,61 @@ export default function StudioLayout() {
     {
       key: '/agents',
       icon: <RobotOutlined />,
-      label: t('layout_agent_management_label', '智能体'),
+      label: t('layout_agent_management_label'),
       onClick: () => navigate('/agents'),
     },
     {
       key: '/workflows',
       icon: <ApartmentOutlined />,
-      label: t('layout_workflows_label', '工作流'),
+      label: t('layout_workflows_label'),
       onClick: () => navigate('/workflows'),
     },
     hasPermission('tools.read') && {
       key: '/tools',
       icon: <ToolOutlined />,
-      label: t('layout_tools_label', '工具'),
+      label: t('layout_tools_label'),
       onClick: () => navigate('/tools'),
     },
     hasPermission('mcp.manage') && {
       key: '/mcp',
       icon: <ApiOutlined />,
-      label: t('layout_mcp_servers_label', 'MCP 服务器'),
+      label: t('layout_mcp_servers_label'),
       onClick: () => navigate('/mcp'),
     },
     {
       key: '/knowledge',
       icon: <BookOutlined />,
-      label: t('layout_knowledge_label', '知识库'),
+      label: t('layout_knowledge_label'),
       onClick: () => navigate('/knowledge'),
     },
     hasPermission('memory.read') && {
       key: '/memory',
       icon: <DatabaseOutlined />,
-      label: t('layout_memory_label', '记忆'),
+      label: t('layout_memory_label'),
       onClick: () => navigate('/memory'),
     },
     hasPermission('skills.manage') && {
       key: '/skills',
       icon: <BulbOutlined />,
-      label: t('layout_skills_label', '自动技能'),
+      label: t('layout_skills_label'),
       onClick: () => navigate('/skills'),
     },
     {
       key: '/plugins',
       icon: <AppstoreOutlined />,
-      label: t('layout_plugins_label', '插件市场'),
+      label: t('layout_plugins_label'),
       onClick: () => navigate('/plugins'),
     },
     hasPermission('connectors.manage') && {
       key: '/connectors',
       icon: <MessageOutlined />,
-      label: t('layout_message_channels_label', '消息渠道'),
+      label: t('layout_message_channels_label'),
       onClick: () => navigate('/connectors'),
     },
     {
       key: '/docs',
       icon: <FileTextOutlined />,
-      label: t('layout_docs_label', '文档中心'),
+      label: t('layout_docs_label'),
       onClick: () => navigate('/docs'),
     },
     { type: 'divider' as const },
@@ -166,53 +167,53 @@ export default function StudioLayout() {
     isAdmin && {
       key: 'admin',
       icon: <SettingOutlined />,
-      label: '系统管理',
+      label: t('layout_section_admin'),
       children: [
         hasPermission('system.config.write') && {
           key: 'rt:/system/config',
           icon: <SettingOutlined />,
-          label: '系统设置',
+          label: t('layout_system_settings_label'),
           onClick: () => goToRuntime('/system/config', token, refreshToken),
         },
         hasPermission('system.config.write') && {
           key: 'rt:/system/connectors',
           icon: <MessageOutlined />,
-          label: '渠道接入配置',
+          label: t('layout_channel_config_label'),
           onClick: () => goToRuntime('/system/connectors', token, refreshToken),
         },
         hasPermission('system.config.write') && {
           key: 'rt:/system/api-keys',
           icon: <KeyOutlined />,
-          label: '开放 API Keys',
+          label: t('layout_api_keys_label'),
           onClick: () => goToRuntime('/system/api-keys', token, refreshToken),
         },
         {
           key: 'rt:/org',
           icon: <ClusterOutlined />,
-          label: '组织架构',
+          label: t('layout_org_label'),
           onClick: () => goToRuntime('/org', token, refreshToken),
         },
         {
           key: 'iam',
           icon: <TeamOutlined />,
-          label: '用户与访问管理',
+          label: t('layout_iam_label'),
           children: [
             hasPermission('users.read') && {
               key: 'rt:/users',
               icon: <UserOutlined />,
-              label: '用户管理',
+              label: t('layout_users_label'),
               onClick: () => goToRuntime('/users', token, refreshToken),
             },
             hasPermission('roles.read') && {
               key: 'rt:/roles',
               icon: <SafetyCertificateOutlined />,
-              label: '角色管理',
+              label: t('layout_roles_label'),
               onClick: () => goToRuntime('/roles', token, refreshToken),
             },
             {
               key: 'rt:/admin/sso',
               icon: <GlobalOutlined />,
-              label: '企业 SSO',
+              label: t('layout_sso_label'),
               onClick: () => goToRuntime('/admin/sso', token, refreshToken),
             },
           ].filter(Boolean),
@@ -220,13 +221,13 @@ export default function StudioLayout() {
         {
           key: 'rt:/tenants',
           icon: <ApartmentOutlined />,
-          label: '租户管理',
+          label: t('layout_tenants_label'),
           onClick: () => goToRuntime('/tenants', token, refreshToken),
         },
         hasPermission('audit.logs.read') && {
           key: 'rt:/audit/logs',
           icon: <AuditOutlined />,
-          label: '审计日志',
+          label: t('layout_audit_logs_label'),
           onClick: () => goToRuntime('/audit/logs', token, refreshToken),
         },
       ].filter(Boolean),
@@ -262,7 +263,7 @@ export default function StudioLayout() {
             onClick={() => goToRuntime('/dashboard', token, refreshToken)}
             style={{ width: '100%' }}
           >
-            返回 Runtime
+            {t('studio_return_runtime')}
           </Button>
         </div>
       )}
@@ -320,9 +321,10 @@ export default function StudioLayout() {
           />
           <div />
 
-          {/* Right side: theme toggle + user avatar */}
+          {/* Right side: language + theme toggle + user avatar */}
           <Space>
-            <Tooltip title={isDark ? t('layout_light_mode_label') : t('layout_dark_mode_label')}>
+            <LanguageSwitcher />
+            <Tooltip title={isDark ? t('layout_tooltip_switch_day') : t('layout_tooltip_switch_night')}>
               <Button
                 type="text"
                 icon={isDark ? <SunOutlined /> : <MoonOutlined />}

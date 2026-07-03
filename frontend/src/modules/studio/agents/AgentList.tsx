@@ -535,11 +535,11 @@ const AgentList: React.FC = () => {
         can_use: values.can_use ?? true,
         can_config: values.can_config ?? false,
       })
-      message.success('授权成功')
+      message.success(t('agent_policy_grant_success'))
       setPolicyGrantOpen(false)
       fetchPolicies(editingId)
     } catch (err: any) {
-      message.error(err?.response?.data?.detail || '授权失败')
+      message.error(err?.response?.data?.detail || t('agent_policy_grant_failure'))
     }
   }
 
@@ -547,10 +547,10 @@ const AgentList: React.FC = () => {
     if (!editingId) return
     try {
       await agentPoliciesApi.revoke(editingId, policyId)
-      message.success('已撤销授权')
+      message.success(t('agent_policy_revoke_success'))
       fetchPolicies(editingId)
     } catch (err: any) {
-      message.error(err?.response?.data?.detail || '撤销失败')
+      message.error(err?.response?.data?.detail || t('agent_policy_revoke_failure'))
     }
   }
 
@@ -770,7 +770,7 @@ const AgentList: React.FC = () => {
       if (!response.ok) {
         // payload.detail from FastAPI, payload.error from slowapi rate limiter
         const detail = payload?.detail || payload?.error || `HTTP ${response.status}`
-        throw new Error(`上传失败 / Upload failed: ${detail}`)
+        throw new Error(t('agent_edit_upload_failed', { detail }))
       }
       form.setFieldValue('figure_url', `/api/v1/uploads/${payload.file_id}/public`)
       message.success(t('agent_edit_figure_upload_success'))
@@ -989,7 +989,7 @@ const AgentList: React.FC = () => {
 
                     <Form.Item label={t('agent_edit_form_division')} name="division">
                       <AutoComplete
-                        placeholder="如：产品技术本部"
+                        placeholder={t('agent_edit_division_placeholder')}
                         options={[...new Set(agents.map(a => a.division).filter(Boolean))].map(d => ({ value: d as string }))}
                         allowClear
                       />
@@ -997,17 +997,17 @@ const AgentList: React.FC = () => {
 
                     {/* ── Gallery category (智能体广场领域分类) ── */}
                     <Form.Item
-                      label={t('agent_edit_form_category', '广场分类')}
+                      label={t('agent_edit_form_category')}
                       name="category"
-                      tooltip={t('agent_edit_form_category_tooltip', '决定该智能体在「智能体广场」中归入哪个领域分组')}
+                      tooltip={t('agent_edit_form_category_tooltip')}
                     >
-                      <Select allowClear placeholder={t('agent_edit_form_category_placeholder', '选择领域分类')} options={[
-                        { value: 'ir',          label: t('gallery_cat_ir', '投资者关系') },
-                        { value: 'design',      label: t('gallery_cat_design', '设计美工') },
-                        { value: 'agent_tools', label: t('gallery_cat_agent_tools', 'Agent 平台工具') },
-                        { value: 'support',     label: t('gallery_cat_support', '技术支持 / 售前') },
-                        { value: 'marketing',   label: t('gallery_cat_marketing', '营销增长') },
-                        { value: 'general',     label: t('gallery_cat_general', '通用探索') },
+                      <Select allowClear placeholder={t('agent_edit_form_category_placeholder')} options={[
+                        { value: 'ir',          label: t('gallery_cat_ir') },
+                        { value: 'design',      label: t('gallery_cat_design') },
+                        { value: 'agent_tools', label: t('gallery_cat_agent_tools') },
+                        { value: 'support',     label: t('gallery_cat_support') },
+                        { value: 'marketing',   label: t('gallery_cat_marketing') },
+                        { value: 'general',     label: t('gallery_cat_general') },
                       ]} />
                     </Form.Item>
 
@@ -1059,8 +1059,8 @@ const AgentList: React.FC = () => {
                       initialValue={true}
                     >
                       <Switch
-                        checkedChildren="✅ 启用 / Enabled"
-                        unCheckedChildren="⛔ 停用 / Disabled"
+                        checkedChildren={t('agent_edit_switch_enabled')}
+                        unCheckedChildren={t('agent_edit_switch_disabled')}
                         style={{ minWidth: 140 }}
                       />
                     </Form.Item>
@@ -1073,8 +1073,8 @@ const AgentList: React.FC = () => {
                       tooltip={t('agent_edit_dlp_bypass_tooltip')}
                     >
                       <Switch
-                        checkedChildren="🔓 跳过 / Bypass"
-                        unCheckedChildren="🔒 启用 / On"
+                        checkedChildren={t('agent_edit_dlp_switch_bypass')}
+                        unCheckedChildren={t('agent_edit_dlp_switch_on')}
                         style={{ minWidth: 130 }}
                       />
                     </Form.Item>
@@ -1332,10 +1332,10 @@ const AgentList: React.FC = () => {
                         if (!channels.includes('feishu') && !channels.includes('teams')) return null
                         return (
                           <div style={{ background: '#f8f9ff', borderRadius: 8, padding: '12px 16px', marginBottom: 16, border: '1px solid #e8eaf6' }}>
-                            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>渠道 Webhook 配置（每个 Agent 独立）</Text>
+                            <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>{t('agent_edit_channel_webhook_title')}</Text>
                             {channels.includes('feishu') && (
                               <Form.Item
-                                label={<span>🟦 飞书 Webhook</span>}
+                                label={<span>{t('agent_edit_channel_feishu')} Webhook</span>}
                                 name={['channel_configs', 'feishu', 'webhook_url']}
                                 style={{ marginBottom: 8 }}
                               >
@@ -1433,34 +1433,34 @@ const AgentList: React.FC = () => {
                 label: (
                   <Space size={4}>
                     <LockOutlined />
-                    访问策略
+                    {t('agent_policy_tab')}
                   </Space>
                 ),
                 children: (
                   <div style={{ paddingTop: 8 }}>
                     {!editingId ? (
-                      <Text type="secondary">请先保存 Agent 后再配置访问策略。</Text>
+                      <Text type="secondary">{t('agent_policy_save_first')}</Text>
                     ) : (
                       <>
                         <div style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Text type="secondary" style={{ fontSize: 12 }}>
-                            DefaultDeny：只有在下方授权的主体才能访问此 Agent。
+                            {t('agent_policy_default_deny_hint')}
                           </Text>
                           {isSuperuser && (
                             <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openPolicyGrant}>
-                              添加授权
+                              {t('agent_policy_add_button')}
                             </Button>
                           )}
                         </div>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                           <thead>
                             <tr style={{ background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
-                              <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>主体类型</th>
-                              <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>主体 ID</th>
-                              <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>查看</th>
-                              <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>使用</th>
-                              <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>配置</th>
-                              <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>到期</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>{t('agent_policy_col_principal_type')}</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>{t('agent_policy_col_principal_id')}</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>{t('agent_policy_col_view')}</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>{t('agent_policy_col_use')}</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>{t('agent_policy_col_config')}</th>
+                              <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>{t('agent_policy_col_expires')}</th>
                               {isSuperuser && <th style={{ padding: '6px 8px' }}></th>}
                             </tr>
                           </thead>
@@ -1471,7 +1471,7 @@ const AgentList: React.FC = () => {
                               </td></tr>
                             ) : policies.length === 0 ? (
                               <tr><td colSpan={7} style={{ textAlign: 'center', padding: 20, color: '#bbb' }}>
-                                暂无授权策略（所有人不可访问）
+                                {t('agent_policy_empty')}
                               </td></tr>
                             ) : policies.map((p: any) => (
                               <tr key={p.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
@@ -1481,9 +1481,9 @@ const AgentList: React.FC = () => {
                                     p.principal_type === 'team' ? 'green' :
                                     p.principal_type === 'department' ? 'orange' : 'purple'
                                   }>
-                                    {p.principal_type === 'user' ? <><UserOutlined /> 用户</> :
-                                     p.principal_type === 'team' ? <><TeamOutlined /> 团队</> :
-                                     p.principal_type === 'department' ? <><ApartmentOutlined /> 部门</> : '租户'}
+                                    {p.principal_type === 'user' ? <><UserOutlined /> {t('agent_policy_type_user')}</> :
+                                     p.principal_type === 'team' ? <><TeamOutlined /> {t('agent_policy_type_team')}</> :
+                                     p.principal_type === 'department' ? <><ApartmentOutlined /> {t('agent_policy_type_department')}</> : t('agent_policy_type_tenant')}
                                   </Tag>
                                 </td>
                                 <td style={{ padding: '6px 8px' }}>
@@ -1514,16 +1514,18 @@ const AgentList: React.FC = () => {
                                   <Tag color={p.can_config ? 'orange' : 'default'}>{p.can_config ? '✓' : '✗'}</Tag>
                                 </td>
                                 <td style={{ padding: '6px 8px', fontSize: 11, color: '#888' }}>
-                                  {p.expires_at ? new Date(p.expires_at).toLocaleDateString('zh-CN') : '永久'}
+                                  {p.expires_at
+                                    ? new Date(p.expires_at).toLocaleDateString(lang === 'ja' ? 'ja-JP' : lang === 'en' ? 'en-US' : 'zh-CN')
+                                    : t('agent_policy_permanent')}
                                 </td>
                                 {isSuperuser && (
                                   <td style={{ padding: '6px 8px' }}>
                                     <Popconfirm
-                                      title="确认撤销此授权？"
+                                      title={t('agent_policy_revoke_confirm')}
                                       onConfirm={() => handleRevokePolicy(p.id)}
-                                      okText="撤销"
+                                      okText={t('agent_policy_revoke_ok')}
                                       okButtonProps={{ danger: true }}
-                                      cancelText="取消"
+                                      cancelText={t('agent_policy_cancel')}
                                     >
                                       <Button type="text" size="small" danger icon={<DeleteOutlined />} />
                                     </Popconfirm>
@@ -1544,14 +1546,14 @@ const AgentList: React.FC = () => {
                 label: (
                   <Space size={4}>
                     <MailOutlined />
-                    邮件收件箱
+                    {t('agent_email_tab')}
                   </Space>
                 ),
                 children: (
                   <div style={{ paddingTop: 8 }}>
                     {!editingId ? (
                       <Text type="secondary">
-                        请先保存 Agent 基本信息后，重新打开编辑窗口即可配置邮件收件箱。
+                        {t('agent_email_save_first')}
                       </Text>
                     ) : (
                     <>
@@ -1560,61 +1562,60 @@ const AgentList: React.FC = () => {
                         checked={emailConfig.enabled}
                         onChange={v => setEmailConfig(c => ({ ...c, enabled: v }))}
                       />
-                      <Text>启用邮件自动处理</Text>
+                      <Text>{t('agent_email_enable')}</Text>
                     </Space>
 
                     <Divider orientation="left" plain style={{ fontSize: 12 }}>
-                      监听邮箱地址
+                      {t('agent_email_monitored')}
                     </Divider>
                     <Select
                       mode="tags"
                       style={{ width: '100%' }}
-                      placeholder="输入邮箱地址后按 Enter 添加，如 support@example.com"
+                      placeholder={t('agent_email_monitored_placeholder')}
                       value={emailConfig.monitored_addresses}
                       onChange={v => setEmailConfig(c => ({ ...c, monitored_addresses: v }))}
                       tokenSeparators={[',', ' ']}
                       open={false}
                     />
                     <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-                      只有发往以上地址的邮件才会进入本 Agent 处理队列。
+                      {t('agent_email_monitored_help')}
                     </Text>
 
                     <Divider orientation="left" plain style={{ fontSize: 12, marginTop: 20 }}>
-                      回复发件地址（Reply-From）
+                      {t('agent_email_reply_from')}
                     </Divider>
                     <Input
-                      placeholder="如 noreply@your-domain.com — 留空则使用收件人地址或系统 SMTP_FROM"
+                      placeholder={t('agent_email_reply_from_placeholder')}
                       value={emailConfig.reply_from}
                       onChange={e => setEmailConfig(c => ({ ...c, reply_from: e.target.value.trim() }))}
                     />
                     <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
-                      回复邮件的 From 地址。需在 Exchange / Office 365 中为 SMTP 账号授予该地址的「Send As」权限。
-                      留空时自动使用来信收件地址（推荐）。
+                      {t('agent_email_reply_from_help')}
                     </Text>
 
                     <Divider orientation="left" plain style={{ fontSize: 12, marginTop: 20 }}>
-                      巡检间隔
+                      {t('agent_email_poll_interval')}
                     </Divider>
                     <Select
                       style={{ width: 180 }}
                       value={emailConfig.poll_interval_minutes}
                       onChange={v => setEmailConfig(c => ({ ...c, poll_interval_minutes: v }))}
                       options={[
-                        { label: '每 1 分钟', value: 1 },
-                        { label: '每 5 分钟', value: 5 },
-                        { label: '每 10 分钟', value: 10 },
-                        { label: '每 30 分钟', value: 30 },
-                        { label: '每 60 分钟', value: 60 },
+                        { label: t('agent_email_interval_option', { n: 1 }), value: 1 },
+                        { label: t('agent_email_interval_option', { n: 5 }), value: 5 },
+                        { label: t('agent_email_interval_option', { n: 10 }), value: 10 },
+                        { label: t('agent_email_interval_option', { n: 30 }), value: 30 },
+                        { label: t('agent_email_interval_option', { n: 60 }), value: 60 },
                       ]}
                     />
 
                     <Divider orientation="left" plain style={{ fontSize: 12, marginTop: 20 }}>
-                      邮件主题过滤词（匹配则跳过）
+                      {t('agent_email_subject_blocklist')}
                     </Divider>
                     <Select
                       mode="tags"
                       style={{ width: '100%' }}
-                      placeholder="如：通知、订阅 — 按 Enter 添加"
+                      placeholder={t('agent_email_subject_blocklist_placeholder')}
                       value={emailConfig.subject_blocklist}
                       onChange={v => setEmailConfig(c => ({ ...c, subject_blocklist: v }))}
                       tokenSeparators={[',', '，', ' ', '　']}
@@ -1622,12 +1623,12 @@ const AgentList: React.FC = () => {
                     />
 
                     <Divider orientation="left" plain style={{ fontSize: 12, marginTop: 20 }}>
-                      发件人黑名单
+                      {t('agent_email_sender_blocklist')}
                     </Divider>
                     <Select
                       mode="tags"
                       style={{ width: '100%' }}
-                      placeholder="如 noreply@example.com — 按 Enter 添加"
+                      placeholder={t('agent_email_sender_blocklist_placeholder')}
                       value={emailConfig.sender_blocklist}
                       onChange={v => setEmailConfig(c => ({ ...c, sender_blocklist: v }))}
                       tokenSeparators={[',', '，', ' ', '　']}
@@ -1646,21 +1647,21 @@ const AgentList: React.FC = () => {
 
       {/* Grant Policy Modal */}
       <Modal
-        title="添加访问授权"
+        title={t('agent_policy_grant_title')}
         open={policyGrantOpen}
         onCancel={() => setPolicyGrantOpen(false)}
         footer={null}
         destroyOnClose
       >
         <Form form={policyForm} layout="vertical" onFinish={handleGrantPolicy}>
-          <Form.Item label="主体类型" name="principal_type" rules={[{ required: true }]}>
+          <Form.Item label={t('agent_policy_col_principal_type')} name="principal_type" rules={[{ required: true }]}>
             <Select
-              placeholder="选择主体类型"
+              placeholder={t('agent_policy_select_type')}
               options={[
-                { value: 'user', label: <Space><UserOutlined />用户</Space> },
-                { value: 'team', label: <Space><TeamOutlined />团队</Space> },
-                { value: 'department', label: <Space><ApartmentOutlined />部门</Space> },
-                { value: 'tenant', label: '租户（全体）' },
+                { value: 'user', label: <Space><UserOutlined />{t('agent_policy_type_user')}</Space> },
+                { value: 'team', label: <Space><TeamOutlined />{t('agent_policy_type_team')}</Space> },
+                { value: 'department', label: <Space><ApartmentOutlined />{t('agent_policy_type_department')}</Space> },
+                { value: 'tenant', label: t('agent_policy_type_tenant_all') },
               ]}
               onChange={() => policyForm.setFieldValue('principal_id', undefined)}
             />
@@ -1672,53 +1673,53 @@ const AgentList: React.FC = () => {
             {({ getFieldValue }) => {
               const ptype = getFieldValue('principal_type')
               if (ptype === 'user') return (
-                <Form.Item label="用户" name="principal_id" rules={[{ required: true }]}>
+                <Form.Item label={t('agent_policy_type_user')} name="principal_id" rules={[{ required: true }]}>
                   <Select
-                    showSearch placeholder="搜索用户"
+                    showSearch placeholder={t('agent_policy_search_user')}
                     filterOption={(input, opt) => (opt?.label as string || '').toLowerCase().includes(input.toLowerCase())}
                     options={policyUsers.map((u: any) => ({ value: u.id, label: `${u.username}${u.email ? ` (${u.email})` : ''}` }))}
                   />
                 </Form.Item>
               )
               if (ptype === 'team') return (
-                <Form.Item label="团队" name="principal_id" rules={[{ required: true }]}>
-                  <Select showSearch placeholder="选择团队"
+                <Form.Item label={t('agent_policy_type_team')} name="principal_id" rules={[{ required: true }]}>
+                  <Select showSearch placeholder={t('agent_policy_select_team')}
                     filterOption={(input, opt) => (opt?.label as string || '').toLowerCase().includes(input.toLowerCase())}
                     options={policyTeams.map((t: any) => ({ value: t.id, label: t.name }))}
                   />
                 </Form.Item>
               )
               if (ptype === 'department') return (
-                <Form.Item label="部门" name="principal_id" rules={[{ required: true }]}>
-                  <Select showSearch placeholder="选择部门"
+                <Form.Item label={t('agent_policy_type_department')} name="principal_id" rules={[{ required: true }]}>
+                  <Select showSearch placeholder={t('agent_policy_select_department')}
                     filterOption={(input, opt) => (opt?.label as string || '').toLowerCase().includes(input.toLowerCase())}
                     options={policyDepts.map((d: any) => ({ value: d.id, label: d.name }))}
                   />
                 </Form.Item>
               )
               if (ptype === 'tenant') return (
-                <Form.Item label="主体 ID" name="principal_id" rules={[{ required: true }]}>
-                  <Input placeholder="输入 tenant_id（全体生效）" />
+                <Form.Item label={t('agent_policy_col_principal_id')} name="principal_id" rules={[{ required: true }]}>
+                  <Input placeholder={t('agent_policy_tenant_id_placeholder')} />
                 </Form.Item>
               )
               return null
             }}
           </Form.Item>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-            <Form.Item label="查看" name="can_view" valuePropName="checked" initialValue={true}>
+            <Form.Item label={t('agent_policy_col_view')} name="can_view" valuePropName="checked" initialValue={true}>
               <Switch defaultChecked />
             </Form.Item>
-            <Form.Item label="使用" name="can_use" valuePropName="checked" initialValue={true}>
+            <Form.Item label={t('agent_policy_col_use')} name="can_use" valuePropName="checked" initialValue={true}>
               <Switch defaultChecked />
             </Form.Item>
-            <Form.Item label="配置" name="can_config" valuePropName="checked" initialValue={false}>
+            <Form.Item label={t('agent_policy_col_config')} name="can_config" valuePropName="checked" initialValue={false}>
               <Switch />
             </Form.Item>
           </div>
           <Form.Item>
             <Space>
-              <Button type="primary" htmlType="submit">授权</Button>
-              <Button onClick={() => setPolicyGrantOpen(false)}>取消</Button>
+              <Button type="primary" htmlType="submit">{t('agent_policy_grant_ok')}</Button>
+              <Button onClick={() => setPolicyGrantOpen(false)}>{t('agent_policy_cancel')}</Button>
             </Space>
           </Form.Item>
         </Form>
