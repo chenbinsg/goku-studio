@@ -375,12 +375,23 @@ def _inject_connection_env(env: Dict[str, str], conn: Dict[str, Any]) -> None:
         return
 
     if ctype == "database":
-        _require_config("db_type", "host", "name", "username")
+        # DB name may arrive as `database` (the key the mcp_connection_admin tool
+        # spec documents) or `name`; accept either so the tool contract and this
+        # runtime can't drift apart. Mirrors the same fix in goku-core's
+        # mcp_runtime.py — keep both copies in sync.
+        db_name = cfg.get("database") or cfg.get("name")
+        _require_config("db_type", "host", "username")
+        if not db_name:
+            raise MCPConnectionError(
+                "MCP_CONNECTION_CONFIG_INVALID",
+                f"外部连接「{code}」缺少必需的配置字段:database。"
+                f"请到「MCP 管理 → 外部连接管理」编辑该连接并补全配置。",
+            )
         _require_secret("password")
         _set("DB_TYPE", cfg.get("db_type"))
         _set("DB_HOST", cfg.get("host"))
         _set("DB_PORT", cfg.get("port"))
-        _set("DB_NAME", cfg.get("name"))
+        _set("DB_NAME", db_name)
         _set("DB_USERNAME", cfg.get("username"))
         _set("DB_PASSWORD", sec.get("password"))
         # read_only lives in allowed_scopes (alongside allowed_tables), where

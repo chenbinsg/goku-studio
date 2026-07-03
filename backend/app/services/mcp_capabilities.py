@@ -488,6 +488,22 @@ def invoke_capability(
     from app.agent.mcp.client import get_mcp_manager
     manager = get_mcp_manager()
 
+    # Lazily (re)connect from the CURRENT DB config. The process-global pool
+    # starts empty after a restart and never self-populates, and a stale entry
+    # keeps a dead connection built from an old start_command — either way
+    # call_tool would return "not connected" even though the server itself is
+    # healthy (the /test endpoint spawns a fresh connection, so it passes).
+    try:
+        _existing = manager._connections.get(server.code)
+        if _existing is None or not _existing.connected:
+            from app.services.mcp_runtime import build_runtime_config
+            manager.connect_server(build_runtime_config(server, db))
+    except Exception as _conn_err:
+        logger.warning(
+            "MCP pool (re)connect for '%s' before test-invoke failed: %s",
+            server.code, _conn_err,
+        )
+
     sanitized_args = _sanitize_args(arguments or {})
     started = time.monotonic()
     response: dict = {}

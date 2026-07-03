@@ -241,9 +241,14 @@ def create_connection(
     if payload.connection_type not in VALID_CONNECTION_TYPES:
         raise HTTPException(
             400, f"unsupported connection_type {payload.connection_type!r}")
+    # Only ACTIVE (non-soft-deleted) rows compete for a code — matches the
+    # DB-side active-only unique index (migration 0090). A soft-deleted row
+    # keeping the same code must NOT block reuse, otherwise create says
+    # "already exists" while list/get (which filter deleted_at) say "not found".
     dup = (
         db.query(MCPExternalConnection)
         .filter(MCPExternalConnection.code == payload.code)
+        .filter(MCPExternalConnection.deleted_at.is_(None))
         .first()
     )
     if dup:
@@ -555,14 +560,47 @@ def _probe_local_path(scopes: dict) -> str:
 
 
 def _probe_database(cfg: dict, sec: dict) -> str:
-    if (cfg.get("db_type") or "mysql") != "mysql":
-        # Only MySQL has a bundled driver; others pass shallow only.
-        return "shallow ok (non-mysql: driver not bundled)"
+    db_type = (cfg.get("db_type") or "mysql").lower()
+    # DB name may live under `database` or `name` (both keys are accepted by
+    # the runtime injector — keep the probe consistent with it).
+    db_name = cfg.get("database") or cfg.get("name")
+    if db_type == "clickhouse":
+        # ClickHouse speaks HTTP natively — probe with a real SELECT 1 so an
+        # unreachable host / bad credentials show up on the page test instead
+        # of a fake "shallow ok".
+        import httpx
+        host = cfg.get("host")
+        port = int(cfg.get("port") or 8123)
+        try:
+            resp = httpx.get(
+                f"http://{host}:{port}/",
+                params={"query": "SELECT 1"},
+                headers={
+                    "X-ClickHouse-User": cfg.get("username") or "default",
+                    "X-ClickHouse-Key": sec.get("password") or "",
+                    **({"X-ClickHouse-Database": db_name} if db_name else {}),
+                },
+                timeout=8,
+            )
+        except httpx.HTTPError as e:
+            raise MCPConnectionError(
+                ERR_TEST_FAILED,
+                f"clickhouse {host}:{port} unreachable: {type(e).__name__}: {str(e)[:200]}",
+            )
+        if resp.status_code != 200:
+            raise MCPConnectionError(
+                ERR_TEST_FAILED,
+                f"clickhouse SELECT 1 → http {resp.status_code}: {resp.text[:200]}",
+            )
+        return "clickhouse SELECT 1 ok"
+    if db_type != "mysql":
+        # Only MySQL/ClickHouse have bundled probes; others pass shallow only.
+        return f"shallow ok ({db_type}: driver not bundled)"
     import pymysql
     conn = pymysql.connect(
         host=cfg.get("host"), port=int(cfg.get("port") or 3306),
         user=cfg.get("username"), password=sec.get("password") or "",
-        database=cfg.get("database"), connect_timeout=8,
+        database=db_name, connect_timeout=8,
     )
     try:
         with conn.cursor() as cur:

@@ -104,6 +104,33 @@ source "$VENV/bin/activate"
 BACKEND_PORT="${VITE_STUDIO_BACKEND_PORT:-8107}"
 FRONTEND_PORT="${VITE_STUDIO_PORT:-5107}"
 
+# ── Ensure MCP runtimes: uv/uvx + node/npx ─────────────────────────────────────
+# Studio's MCP server test/sync spawns the same stdio subprocesses as core:
+# `npx -y <pkg>` presets (mysql, github, …) need node; `uvx <pkg>` presets
+# (official ClickHouse: `uvx mcp-clickhouse`) need uv. Docker deploys bake both
+# into the image (see backend/Dockerfile); this covers bare-metal/script deploys.
+# Idempotent: skips instantly when already installed.
+if ! command -v uvx >/dev/null 2>&1 && [ ! -x /usr/local/bin/uvx ] && [ ! -x /opt/homebrew/bin/uvx ]; then
+  echo "uvx not found — installing uv (runtime for uvx-based MCP servers)..."
+  if command -v brew >/dev/null 2>&1; then
+    brew install uv || echo "WARN: brew install uv failed — install uv manually"
+  else
+    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
+      || curl -LsSf https://astral.sh/uv/install.sh | sh \
+      || echo "WARN: uv install failed — uvx-based MCP servers (clickhouse) will not start"
+    if [ -x "$HOME/.local/bin/uvx" ] && [ ! -x /usr/local/bin/uvx ]; then
+      ln -sf "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx" /usr/local/bin/ 2>/dev/null \
+        || echo "WARN: could not link uvx into /usr/local/bin — do it manually: sudo ln -s $HOME/.local/bin/uv{,x} /usr/local/bin/"
+    fi
+  fi
+  # Final verification — `curl | sh` can "succeed" silently on network failure,
+  # so re-check and warn loudly if uvx is still absent.
+  command -v uvx >/dev/null 2>&1 || [ -x /usr/local/bin/uvx ] || [ -x /opt/homebrew/bin/uvx ] || \
+    echo "WARN: uv is still not installed — uvx-based MCP servers (clickhouse) will fail to start. Install manually: https://docs.astral.sh/uv/"
+fi
+command -v npx >/dev/null 2>&1 || [ -x /opt/homebrew/bin/npx ] || \
+  echo "WARN: npx (node) not found — npx-based MCP servers (mysql, github, …) will fail to start. Install Node.js 20+."
+
 # ── migrations ────────────────────────────────────────────────────────────────
 
 echo "=== goku-studio: applying migrations ==="

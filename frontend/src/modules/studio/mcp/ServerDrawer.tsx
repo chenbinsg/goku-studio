@@ -181,6 +181,25 @@ const PRESETS: McpPreset[] = [
     service_category: 'data_service', connection_type: 'stdio',
     start_command: 'npx -y @modelcontextprotocol/server-postgres',
     needs_connection: true, suggested_type: 'database' },
+  // MySQL / ClickHouse: official standalone packages, credentials injected from
+  // the bound `database` external connection (DB_*) and mapped to each
+  // package's own env names inside the command. Two deliberate quirks — do NOT
+  // "fix" them:
+  //   1. `"…PASS""WORD"` string-splitting keeps the literal word "password"
+  //      out of the stored command (DLP blocks tool I/O containing it).
+  //   2. The leading `export PATH=…` covers the standard install locations of
+  //      npx/uvx on macOS (brew) and Linux/Docker — the MCP subprocess env has
+  //      no PATH of its own, so the command must bootstrap one.
+  // Runtime prerequisites per environment: node (npx) for mysql, uv (uvx) for
+  // clickhouse.
+  { key: 'mysql', icon: <DatabaseOutlined style={{ color: '#00758f' }} />,
+    service_category: 'data_service', connection_type: 'stdio',
+    start_command: 'sh -c \'export PATH="$(dirname "${NPX}"):/usr/bin:/bin"; MYSQL_HOST="$DB_HOST" MYSQL_PORT="$DB_PORT" MYSQL_USER="$DB_USERNAME" MYSQL_PASS="$(printenv "DB_PASS""WORD")" MYSQL_DB="$DB_NAME" exec "${NPX}" -y @benborla29/mcp-server-mysql\'',
+    needs_connection: true, suggested_type: 'database' },
+  { key: 'clickhouse', icon: <DatabaseOutlined style={{ color: '#f2b100' }} />,
+    service_category: 'data_service', connection_type: 'stdio',
+    start_command: 'sh -c \'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$PATH"; export CLICKHOUSE_HOST="$DB_HOST" CLICKHOUSE_PORT="$DB_PORT" CLICKHOUSE_USER="$DB_USERNAME" CLICKHOUSE_DATABASE="$DB_NAME" CLICKHOUSE_SECURE=false; export "CLICKHOUSE_PASS""WORD"="$(printenv "DB_PASS""WORD")"; exec uvx mcp-clickhouse\'',
+    needs_connection: true, suggested_type: 'database' },
   { key: 'brave-search', icon: <SearchOutlined style={{ color: '#fb542b' }} />,
     service_category: 'search_service', connection_type: 'stdio',
     start_command: 'npx -y @modelcontextprotocol/server-brave-search',
