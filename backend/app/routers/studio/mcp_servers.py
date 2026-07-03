@@ -52,14 +52,13 @@ from app.schemas import (
     MCPServerListResponse,
     MCPServerStats,
     MCPServerUpdate,
-    MCPSyncBucketCounts,
     MCPSyncResult,
 )
 from datetime import datetime
 from app.services import mcp_authorizations as authz
 from app.services import mcp_capabilities as caps
 from app.services import mcp_observability as observe
-from app.services import mcp_runtime
+from app.services import core_runtime_proxy
 from app.services import mcp_servers as svc
 
 
@@ -185,48 +184,20 @@ async def test_mcp_server_connection(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
 ) -> MCPConnectionTestResult:
-    """Run a one-off connection probe.
+    """Run a one-off connection probe — executed by the goku-core runtime.
 
-    The probe is independent of the live runtime pool — works on
-    disabled servers too, and doesn't disturb existing connections.
-    Side effects:
-      - append one row to ``mcp_health_records``
-      - mirror status / last_checked_at / last_response_time onto
-        the ``mcp_servers`` row
-      - write an ``mcp_server.connection_test`` audit-log entry
+    Proxied to core's identical endpoint (see
+    :mod:`app.services.core_runtime_proxy` for why Studio must not probe
+    locally). Core appends the ``mcp_health_records`` row, mirrors
+    status / last_checked_at / last_response_time onto the shared
+    ``mcp_servers`` row, and writes the ``mcp_server.connection_test``
+    audit-log entry — no local side effects here.
     """
-    server = svc._get_by_id_strict(db, server_id)
-    config = mcp_runtime.build_runtime_config(server, db)
-    result = await mcp_runtime.probe_connection(config, timeout=server.timeout_seconds)
-    record = mcp_runtime.record_health_probe(db, server, result)
-
-    # Audit log (non-blocking — failure here doesn't change the result).
-    svc._log_audit(
-        db,
-        user_id=current_user.id,
-        action="mcp_server.connection_test",
-        server=server,
-        request=request,
-        details={
-            "status": result.status,
-            "response_time_ms": result.response_time_ms,
-            "capabilities_discovered": result.capabilities_discovered,
-            "error_type": result.error_type,
-            # error_message intentionally NOT in audit details to keep
-            # the audit row small and bounded — full message is in
-            # mcp_health_records.error_message for ops debugging.
-        },
+    svc._get_by_id_strict(db, server_id)  # local 404 before the network hop
+    data = await core_runtime_proxy.post_to_core(
+        request, f"/api/v1/mcp-servers/{server_id}/test"
     )
-
-    return MCPConnectionTestResult(
-        server_id=server.id,
-        status=result.status,
-        response_time_ms=result.response_time_ms,
-        capabilities_discovered=result.capabilities_discovered,
-        error_type=result.error_type,
-        error_message=result.error_message,
-        checked_at=record.checked_at,
-    )
+    return MCPConnectionTestResult(**data)
 
 
 @router.post("/{server_id}/sync", response_model=MCPSyncResult)
@@ -247,49 +218,19 @@ async def sync_mcp_server_capabilities(
 
     Each capability is enumerated independently — one failing won't
     poison the others. Aggregate status (``mcp_servers.last_sync_status``)
-    is success / partial_success / failed. Writes an
-    ``mcp_server.capability_sync`` audit-log entry with the counts.
+    is success / partial_success / failed.
+
+    Proxied to the goku-core runtime's identical endpoint (see
+    :mod:`app.services.core_runtime_proxy`). Core persists the synced
+    capabilities / resources / prompts, the sync status on the shared
+    ``mcp_servers`` row, and the ``mcp_server.capability_sync``
+    audit-log entry — no local side effects here.
     """
-    server = svc._get_by_id_strict(db, server_id)
-    result = await mcp_runtime.sync_capabilities(db, server, timeout=server.timeout_seconds)
-
-    def _to_schema(c) -> MCPSyncBucketCounts:
-        return MCPSyncBucketCounts(
-            kind=c.kind, ok=c.ok, error=c.error,
-            added=c.added, updated=c.updated, synced=c.synced, removed=c.removed,
-        )
-
-    def _counts(c) -> dict:
-        return {
-            "ok": c.ok, "added": c.added, "updated": c.updated,
-            "synced": c.synced, "removed": c.removed,
-        }
-
-    svc._log_audit(
-        db,
-        user_id=current_user.id,
-        action="mcp_server.capability_sync",
-        server=server,
-        request=request,
-        details={
-            "status": result.status,
-            "capabilities": _counts(result.capabilities),
-            "resources": _counts(result.resources),
-            "prompts": _counts(result.prompts),
-            "error_type": result.error_type,
-        },
+    svc._get_by_id_strict(db, server_id)  # local 404 before the network hop
+    data = await core_runtime_proxy.post_to_core(
+        request, f"/api/v1/mcp-servers/{server_id}/sync"
     )
-
-    return MCPSyncResult(
-        server_id=server.id,
-        status=result.status,
-        capabilities=_to_schema(result.capabilities),
-        resources=_to_schema(result.resources),
-        prompts=_to_schema(result.prompts),
-        synced_at=result.synced_at,
-        error_type=result.error_type,
-        error_message=result.error_message,
-    )
+    return MCPSyncResult(**data)
 
 
 @router.post("/{server_id}/disable", response_model=MCPServerDetail)
@@ -394,7 +335,7 @@ def get_mcp_server_capability(
     "/{server_id}/capabilities/{capability_id}/test-invoke",
     response_model=MCPCapabilityInvokeResponse,
 )
-def test_invoke_mcp_server_capability(
+async def test_invoke_mcp_server_capability(
     server_id: str,
     capability_id: str,
     payload: MCPCapabilityInvokeRequest,
@@ -402,32 +343,23 @@ def test_invoke_mcp_server_capability(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
 ) -> MCPCapabilityInvokeResponse:
-    """Invoke a capability live via the runtime pool. Writes a sanitized
-    row into ``mcp_call_logs`` with ``invoke_type='mcp_test'``.
+    """Invoke a capability live via the goku-core runtime pool.
+
+    Proxied to core's identical endpoint (see
+    :mod:`app.services.core_runtime_proxy`) — the live MCP connection pool
+    lives in core, and the invocation there writes the sanitized
+    ``mcp_call_logs`` row (``invoke_type='mcp_test'``) into the shared DB.
 
     Server must be ``status='enabled'`` and capability must be
-    ``status='active'`` — both gated as 400 / 404 if violated.
-
-    Sanitization rules (call log only — the live call sees raw args):
-      - Argument keys matching KEY/TOKEN/SECRET/PASSWORD substrings
-        get their value replaced with ``[REDACTED]``.
-      - String values longer than 200 chars get truncated.
-      - Full response body is NEVER stored; only a 500-char preview
-        lands in ``output_summary`` and the HTTP response.
+    ``status='active'`` — core gates these as 400 / 404.
     """
-    call_log, response = caps.invoke_capability(
-        db, server_id, capability_id, payload.arguments,
-        user_id=current_user.id, request=request,
+    svc._get_by_id_strict(db, server_id)  # local 404 before the network hop
+    data = await core_runtime_proxy.post_to_core(
+        request,
+        f"/api/v1/mcp-servers/{server_id}/capabilities/{capability_id}/test-invoke",
+        json_body={"arguments": payload.arguments},
     )
-
-    return MCPCapabilityInvokeResponse(
-        call_log_id=call_log.id,
-        result=call_log.result,
-        response_time_ms=call_log.response_time,
-        output_summary=call_log.output_summary,
-        error_type=call_log.error_type,
-        error_message=call_log.error_message,
-    )
+    return MCPCapabilityInvokeResponse(**data)
 
 
 @router.get("/{server_id}/resources", response_model=MCPResourceListResponse)

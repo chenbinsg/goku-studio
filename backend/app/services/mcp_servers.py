@@ -27,6 +27,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
+from urllib.parse import quote
 from typing import Any, Optional, Tuple
 
 from fastapi import HTTPException, Request, status
@@ -659,27 +660,40 @@ def _encrypt_env_dict(env: Optional[dict]) -> Optional[str]:
     return encryption.encrypt_secret(json.dumps(env, ensure_ascii=False))
 
 
-def _trigger_runtime_refresh(server_code: str) -> None:
-    """Ask the live MCP runtime to re-evaluate this server.
+def _trigger_runtime_refresh(server_code: str, request: Optional[Request] = None) -> None:
+    """Ask the goku-core runtime to re-evaluate this server.
 
     Called after every CRUD write so enabling / disabling / editing /
-    deleting in the admin UI immediately affects what's actually
-    connected. Failures are logged but never raised: the user-visible
-    DB write has already succeeded; runtime refresh is a best-effort
-    side-effect, and the admin can manually trigger a refresh from
-    the UI if needed.
-    """
-    try:
-        from app.agent.mcp.client import get_mcp_manager
-        from app.agent.mcp.registry_integration import refresh_mcp_server
-        from app.agent.tool_registry import get_tool_registry
+    deleting in the Studio UI immediately affects what's actually
+    connected. The live MCP pool that agents use lives in goku-core, so
+    this POSTs to core's ``/{server_code}/refresh-runtime`` endpoint,
+    forwarding the caller's Authorization header. Refreshing Studio's
+    own in-process MCP manager here would be pointless (nothing serves
+    tools from it) and noisy — builtin ``app.*`` stdio servers don't
+    exist in this codebase (see services/core_runtime_proxy.py).
 
-        manager = get_mcp_manager()
-        registry = get_tool_registry()
-        refresh_mcp_server(registry, manager, server_code)
+    Failures are logged but never raised: the user-visible DB write has
+    already succeeded; runtime refresh is a best-effort side-effect, and
+    core reloads the full active set from the shared DB on restart.
+    """
+    import httpx
+
+    from app.config import settings
+
+    url = (
+        settings.CORE_API_URL.rstrip("/")
+        + f"/api/v1/mcp-servers/{quote(server_code, safe='')}/refresh-runtime"
+    )
+    headers = {}
+    authorization = request.headers.get("authorization") if request is not None else None
+    if authorization:
+        headers["Authorization"] = authorization
+    try:
+        resp = httpx.post(url, headers=headers, timeout=30)
+        resp.raise_for_status()
     except Exception as e:
         logger.warning(
-            "MCP runtime refresh failed for server %r (DB write OK): %s",
+            "core runtime MCP refresh failed for server %r (DB write OK): %s",
             server_code, e,
         )
 
@@ -757,7 +771,7 @@ def create_server(
         request=request,
         details={"changes": _diff_for_audit({}, _orm_to_plain_dict(server))},
     )
-    _trigger_runtime_refresh(server.code)
+    _trigger_runtime_refresh(server.code, request)
     return server
 
 
@@ -854,7 +868,7 @@ def update_server(
         request=request,
         details={"changes": _diff_for_audit(before, after)},
     )
-    _trigger_runtime_refresh(server.code)
+    _trigger_runtime_refresh(server.code, request)
     return server
 
 
@@ -947,13 +961,11 @@ def soft_delete_server(
         server=server,
         request=request,
     )
-    # Refresh after soft-delete: the loader now excludes this server,
-    # so refresh_mcp_server disconnects + unregisters its tools.
-    _trigger_runtime_refresh(server.code)
-
-    # Knowledge base must not advertise a deleted server's capabilities.
-    from app.services import mcp_knowledge
-    mcp_knowledge.purge_server_knowledge(db, server)
+    # Refresh after soft-delete: the loader now excludes this server, so
+    # core's refresh_mcp_server disconnects + unregisters its tools, and
+    # core also purges the knowledge catalog (embedding/vector_store are
+    # runtime-only modules — Studio must not touch them).
+    _trigger_runtime_refresh(server.code, request)
 
 
 def _set_status(
@@ -985,17 +997,10 @@ def _set_status(
     # Status changes affect what the runtime should connect to.
     # enable → loader includes → refresh connects.
     # disable → loader excludes → refresh disconnects.
-    _trigger_runtime_refresh(server.code)
-
-    # Keep the knowledge catalog in lockstep with usability:
-    #   disabled → purge (a not-usable server must not be discoverable)
-    #   enabled  → rebuild from existing active capabilities (next sync also
-    #              rebuilds, but do it now so re-enable is immediate)
-    from app.services import mcp_knowledge
-    if new_status == "disabled":
-        mcp_knowledge.purge_server_knowledge(db, server)
-    elif new_status == "enabled":
-        mcp_knowledge.refresh_server_knowledge(db, server)
+    # Core also keeps the knowledge catalog in lockstep (rebuild on enable,
+    # purge on disable) — embedding/vector_store are runtime-only modules,
+    # so Studio must not attempt that locally (it 500'd with ImportError).
+    _trigger_runtime_refresh(server.code, request)
     return server
 
 

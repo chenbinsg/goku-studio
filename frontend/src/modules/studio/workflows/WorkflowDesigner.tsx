@@ -355,9 +355,13 @@ function dagToRf(dag: DagData): { nodes: Node[]; edges: Edge[] } {
   const rfNodes: Node[] = []
   const rfEdges: Edge[] = []
 
+  const visibleDagNodes = dag.nodes.filter((dn) => dn.id !== 'send_email')
+  const visibleNodeIds = new Set(visibleDagNodes.map((dn) => dn.id))
+
   // Support both depends_on and edges formats
-  const edgeList: Array<{ from: string; to: string }> = (dag as any).edges || []
-  dag.nodes.forEach((dn) => {
+  const edgeList: Array<{ from: string; to: string }> = ((dag as any).edges || [])
+    .filter((e: any) => visibleNodeIds.has(e.from) && visibleNodeIds.has(e.to))
+  visibleDagNodes.forEach((dn) => {
     const pos = dn.position || { x: 200 + Math.random() * 300, y: 100 + Math.random() * 300 }
     rfNodes.push({
       id: dn.id,
@@ -365,7 +369,7 @@ function dagToRf(dag: DagData): { nodes: Node[]; edges: Edge[] } {
       position: pos,
       data: { label: dn.label, ...(dn.config || {}) } as NodeData,
     })
-    ;(dn.depends_on || []).forEach((dep) => {
+    ;(dn.depends_on || []).filter((dep) => visibleNodeIds.has(dep)).forEach((dep) => {
       rfEdges.push({
         id: `${dep}-${dn.id}`,
         source: dep,

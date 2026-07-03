@@ -236,11 +236,11 @@ def set_capability_status(
             details={"capability_name": cap.capability_name, "server_id": server_id,
                      "changes": {"status": {"before": before, "after": target}}},
         )
-        try:
-            from app.services import mcp_knowledge
-            mcp_knowledge.refresh_server_knowledge(db, server)
-        except Exception as e:  # KB hiccup must not fail the status change
-            logger.warning("KB refresh after capability status change failed: %s", e)
+        # Runtime + knowledge catalog live in goku-core (embedding /
+        # vector_store don't exist in this codebase) — ask core to
+        # re-evaluate the server; best-effort, never fails the write.
+        from app.services.mcp_servers import _trigger_runtime_refresh
+        _trigger_runtime_refresh(server.code, request)
     return {
         "mcp_capability_id": cap.id,
         "capability_name": cap.capability_name,

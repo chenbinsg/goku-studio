@@ -59,7 +59,7 @@ const WorkflowMonitor: React.FC = () => {
   const sseRef = useRef<EventSource | null>(null)
 
   const dagToReactFlow = useCallback((dag: any, statusMap: Record<string, string>, nodeExecutions: any[] = []) => {
-    const dagNodes: any[] = dag?.nodes || []
+    const dagNodes: any[] = (dag?.nodes || []).filter((node: any) => node.id !== 'send_email')
     const nodeById = new Map(dagNodes.map((node: any) => [node.id, node]))
     const executionByNodeId = new Map(nodeExecutions.map((ne: any) => [ne.node_id, ne]))
     const edgesByKey = new Map<string, any>()

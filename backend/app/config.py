@@ -14,6 +14,12 @@ class Settings(SharedSettings):
     PUBLIC_BASE_URL: str = ""
     AGENT_CODEBASE_DIR: str = "/app"
 
+    # ── goku-core runtime API (MCP test/sync/test-invoke are proxied there) ─
+    # Studio never spawns MCP servers itself — built-in stdio servers only
+    # exist in the goku-core codebase. See services/core_runtime_proxy.py.
+    CORE_API_URL: str = "http://localhost:8106"
+    CORE_API_TIMEOUT_SECS: int = 120  # sync enumerates tools+resources+prompts
+
     # ── Enterprise connectors (used by Studio connector config) ────────────
     DINGTALK_WEBHOOK_TOKEN: Optional[str] = None
     DINGTALK_WEBHOOK_SECRET: Optional[str] = None
