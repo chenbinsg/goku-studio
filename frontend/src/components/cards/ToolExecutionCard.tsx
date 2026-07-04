@@ -158,7 +158,7 @@ const PRDScoreResult: React.FC<{ result: any }> = ({ result }) => {
                 )}
               </Space>
               <Typography.Text strong style={{ fontSize: 12, color: scoreColor(d.score) }}>
-                {d.score.toFixed(0)}分
+                {t('card_score', { n: d.score.toFixed(0) })}
               </Typography.Text>
             </div>
             <Progress percent={d.score} strokeColor={scoreColor(d.score)} showInfo={false} size="small" />

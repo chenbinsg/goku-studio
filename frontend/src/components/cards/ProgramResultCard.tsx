@@ -9,6 +9,7 @@ import {
   CloseCircleFilled,
 } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
+import i18next from 'i18next'
 import type { CardMessage, ProgramResultCardData, ProgramFile } from '../../types/card'
 import type { DataNode } from 'antd/es/tree'
 
@@ -41,7 +42,7 @@ function buildFileTree(files: ProgramFile[]): DataNode[] {
             <Space size={4}>
               <FileOutlined style={{ color: LANG_COLORS[file.language] || '#8c8c8c', fontSize: 12 }} />
               <Text style={{ fontSize: 12 }}>{part}</Text>
-              <Text type="secondary" style={{ fontSize: 11 }}>({file.lines}行)</Text>
+              <Text type="secondary" style={{ fontSize: 11 }}>{i18next.t('card_lines', { n: file.lines })}</Text>
             </Space>
           ) : (
             <Space size={4}>
@@ -73,7 +74,7 @@ function buildFileTree(files: ProgramFile[]): DataNode[] {
           <Space size={4}>
             <FileOutlined style={{ color: LANG_COLORS[file.language] || '#8c8c8c', fontSize: 12 }} />
             <Text style={{ fontSize: 12 }}>{file.path}</Text>
-            <Text type="secondary" style={{ fontSize: 11 }}>({file.lines}行)</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>{i18next.t('card_lines', { n: file.lines })}</Text>
           </Space>
         ),
         key:    `file:${idx}`,
@@ -99,7 +100,7 @@ function buildFileTree(files: ProgramFile[]): DataNode[] {
           <Space size={4}>
             <FileOutlined style={{ color: LANG_COLORS[file.language] || '#8c8c8c', fontSize: 12 }} />
             <Text style={{ fontSize: 12 }}>{parts.slice(1).join('/')}</Text>
-            <Text type="secondary" style={{ fontSize: 11 }}>({file.lines}行)</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>{i18next.t('card_lines', { n: file.lines })}</Text>
           </Space>
         ),
         key:    `file:${idx}`,

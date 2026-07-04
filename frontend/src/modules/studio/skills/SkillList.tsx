@@ -228,7 +228,7 @@ const SkillList: React.FC = () => {
       ),
     },
     {
-      title: '加速比',
+      title: t('skill_speedup_col'),
       dataIndex: 'avg_speedup',
       key: 'avg_speedup',
       width: 90,
@@ -405,8 +405,8 @@ const SkillList: React.FC = () => {
               </Descriptions.Item>
               <Descriptions.Item label={t('skill_detail_speedup', '加速比')}>
                 {detailModal.avg_speedup
-                  ? `步骤减少 ${((1 - 1 / detailModal.avg_speedup) * 100).toFixed(0)}%（${detailModal.avg_speedup.toFixed(1)}×）`
-                  : '数据不足（需 ≥3 次使用）'}
+                  ? t('skill_speedup_detail', { pct: ((1 - 1 / detailModal.avg_speedup) * 100).toFixed(0), x: detailModal.avg_speedup.toFixed(1) })
+                  : t('skill_insufficient_data')}
               </Descriptions.Item>
               <Descriptions.Item label={t('skill_detail_created', 'Created')}>
                 {new Date(detailModal.created_at).toLocaleString()}

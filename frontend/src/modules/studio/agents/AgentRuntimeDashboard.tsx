@@ -31,6 +31,7 @@ import {
   ReloadOutlined,
   ThunderboltOutlined,
 } from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
 import { agentInstanceApi, AgentTypeStatus } from '@/api'
 import AgentInstancePanel from '@/components/AgentInstancePanel'
 
@@ -76,6 +77,7 @@ interface PanelTarget {
 }
 
 const AgentRuntimeDashboard: React.FC = () => {
+  const { t } = useTranslation()
   const [statuses, setStatuses] = useState<AgentTypeStatus[]>([])
   const [loading, setLoading] = useState(false)
   const [panelTarget, setPanelTarget] = useState<PanelTarget | null>(null)
@@ -120,10 +122,10 @@ const AgentRuntimeDashboard: React.FC = () => {
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>
-            ⚡ Agent 并发运行状态
+            ⚡ {t('agent_runtime_title')}
           </Title>
           <Text type="secondary" style={{ fontSize: 13 }}>
-            实时监控所有 Agent 类型的槽位占用与队列情况
+            {t('agent_runtime_subtitle')}
           </Text>
         </div>
         <Space>
@@ -134,7 +136,7 @@ const AgentRuntimeDashboard: React.FC = () => {
             </Text>
           )}
           <Button icon={<ReloadOutlined />} onClick={fetchAll} loading={loading}>
-            刷新
+            {t('agent_runtime_refresh')}
           </Button>
         </Space>
       </div>
@@ -153,14 +155,14 @@ const AgentRuntimeDashboard: React.FC = () => {
         <Row gutter={24} align="middle">
           <Col xs={24} sm={6}>
             <Statistic
-              title="总槽位"
+              title={t('agent_runtime_total_slots')}
               value={totalSlots}
               prefix={<ThunderboltOutlined style={{ color: '#6366f1' }} />}
             />
           </Col>
           <Col xs={24} sm={6}>
             <Statistic
-              title="运行中"
+              title={t('agent_runtime_busy')}
               value={totalBusy}
               valueStyle={{ color: totalBusy > 0 ? '#faad14' : '#52c41a' }}
               prefix={<Badge status="processing" />}
@@ -168,7 +170,7 @@ const AgentRuntimeDashboard: React.FC = () => {
           </Col>
           <Col xs={24} sm={6}>
             <Statistic
-              title="空闲"
+              title={t('agent_runtime_idle')}
               value={totalIdle}
               valueStyle={{ color: '#52c41a' }}
               prefix={<CheckCircleOutlined style={{ color: '#52c41a' }} />}
@@ -176,7 +178,7 @@ const AgentRuntimeDashboard: React.FC = () => {
           </Col>
           <Col xs={24} sm={6}>
             <Statistic
-              title="排队等待"
+              title={t('agent_runtime_queued')}
               value={totalQueued}
               valueStyle={{ color: totalQueued > 0 ? '#ff4d4f' : '#52c41a' }}
               prefix={<AlertOutlined style={{ color: totalQueued > 0 ? '#ff4d4f' : '#52c41a' }} />}
@@ -184,7 +186,7 @@ const AgentRuntimeDashboard: React.FC = () => {
           </Col>
           <Col xs={24} style={{ marginTop: 12 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>全局占用率</Text>
+              <Text type="secondary" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>{t('agent_runtime_global_pct')}</Text>
               <Progress
                 percent={globalPct}
                 strokeColor={globalPct >= 90 ? '#ff4d4f' : globalPct >= 50 ? '#faad14' : '#52c41a'}
@@ -201,7 +203,7 @@ const AgentRuntimeDashboard: React.FC = () => {
       <Spin spinning={loading && statuses.length === 0}>
         {statuses.length === 0 && !loading ? (
           <Empty
-            description="暂无已初始化的 Agent 类型（提交任务后自动出现）"
+            description={t('agent_runtime_empty')}
             image={Empty.PRESENTED_IMAGE_SIMPLE}
             style={{ padding: '60px 0' }}
           />
@@ -241,11 +243,11 @@ const AgentRuntimeDashboard: React.FC = () => {
                           {st.agent_type}
                         </div>
                         <div style={{ fontSize: 11, color: '#94a3b8' }}>
-                          {st.total_slots} 槽位
+                          {t('agent_runtime_slots_suffix', { n: st.total_slots })}
                         </div>
                       </div>
                       {st.queued > 0 && (
-                        <Tooltip title={`${st.queued} 个请求排队等待`}>
+                        <Tooltip title={t('agent_runtime_queue_tooltip', { n: st.queued })}>
                           <Tag color="warning" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }}>
                             +{st.queued}
                           </Tag>
@@ -264,10 +266,10 @@ const AgentRuntimeDashboard: React.FC = () => {
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <Space size={6}>
                         {st.busy > 0 && (
-                          <Badge status="processing" text={<Text style={{ fontSize: 11 }}>{st.busy} 运行</Text>} />
+                          <Badge status="processing" text={<Text style={{ fontSize: 11 }}>{t('agent_runtime_busy_badge', { n: st.busy })}</Text>} />
                         )}
                         {st.idle > 0 && (
-                          <Badge status="default" text={<Text type="secondary" style={{ fontSize: 11 }}>{st.idle} 闲</Text>} />
+                          <Badge status="default" text={<Text type="secondary" style={{ fontSize: 11 }}>{t('agent_runtime_idle_badge', { n: st.idle })}</Text>} />
                         )}
                       </Space>
                       <Text style={{ fontSize: 11, color }}>

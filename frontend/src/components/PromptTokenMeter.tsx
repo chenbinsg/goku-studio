@@ -21,6 +21,7 @@
 import React, { useMemo, useState } from 'react'
 import { Button, Modal, Spin, Tag, Tooltip, message } from 'antd'
 import { ThunderboltOutlined } from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
 import { api } from '../api'
 
 // ── Budget config ─────────────────────────────────────────────────────────────
@@ -85,14 +86,14 @@ function analyzeText(text: string): TextStats {
 
 interface StatusInfo {
   color: string; bgColor: string; borderColor: string
-  emoji: string; label: string; labelEn: string
+  emoji: string; labelKey: string
 }
 
 function getStatus(tokens: number, cfg: TokenBudgetConfig): StatusInfo {
-  if (tokens <= cfg.optimal)  return { color: '#52c41a', bgColor: '#f6ffed', borderColor: '#b7eb8f', emoji: '🟢', label: '精简', labelEn: 'Optimal' }
-  if (tokens <= cfg.moderate) return { color: '#fadb14', bgColor: '#fffbe6', borderColor: '#ffe58f', emoji: '🟡', label: '适中', labelEn: 'Moderate' }
-  if (tokens <= cfg.tight)    return { color: '#fa8c16', bgColor: '#fff7e6', borderColor: '#ffd591', emoji: '🟠', label: '偏大', labelEn: 'Tight' }
-  return                             { color: '#ff4d4f', bgColor: '#fff2f0', borderColor: '#ffccc7', emoji: '🔴', label: '超标', labelEn: 'Critical' }
+  if (tokens <= cfg.optimal)  return { color: '#52c41a', bgColor: '#f6ffed', borderColor: '#b7eb8f', emoji: '🟢', labelKey: 'token_meter_level_optimal' }
+  if (tokens <= cfg.moderate) return { color: '#fadb14', bgColor: '#fffbe6', borderColor: '#ffe58f', emoji: '🟡', labelKey: 'token_meter_level_moderate' }
+  if (tokens <= cfg.tight)    return { color: '#fa8c16', bgColor: '#fff7e6', borderColor: '#ffd591', emoji: '🟠', labelKey: 'token_meter_level_tight' }
+  return                             { color: '#ff4d4f', bgColor: '#fff2f0', borderColor: '#ffccc7', emoji: '🔴', labelKey: 'token_meter_level_critical' }
 }
 
 // ── Optimize API ──────────────────────────────────────────────────────────────
@@ -126,6 +127,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
   children,
   showEquivalence = true,
 }) => {
+  const { t } = useTranslation()
   const stats  = useMemo(() => analyzeText(value), [value])
   const status = useMemo(() => getStatus(stats.estimatedTokens, budget), [stats, budget])
   const fillPct = Math.min(100, Math.round((stats.estimatedTokens / budget.max) * 100))
@@ -150,8 +152,8 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
       const isLlm = detail.toLowerCase().includes('llm') || detail.toLowerCase().includes('llm call')
       message.error(
         isLlm
-          ? `⚠️ LLM 服务异常，优化暂不可用 / LLM unavailable: ${detail}`
-          : `优化失败，请稍后重试${detail ? `：${detail}` : ''}`,
+          ? t('token_meter_llm_unavailable', { detail })
+          : t('token_meter_optimize_failure', { detail: detail ? `: ${detail}` : '' }),
         6,
       )
       setModalOpen(false)
@@ -163,7 +165,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
   function handleAdopt() {
     if (result && onChange) {
       onChange(result.optimized)
-      message.success('已替换为优化版本 ✨')
+      message.success(t('token_meter_adopted'))
     }
     setModalOpen(false)
     setResult(null)
@@ -172,12 +174,12 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
   // Tooltip detail
   const tooltipContent = (
     <div style={{ fontSize: 12, lineHeight: 1.8 }}>
-      <div><strong>Token 预算详情</strong></div>
-      <div>总字符: {stats.chars} | CJK: {stats.cjkChars}（{Math.round(stats.cjkRatio * 100)}%）</div>
-      <div>估算 Tokens: <strong>{stats.estimatedTokens}</strong> / {budget.max}</div>
+      <div><strong>{t('token_meter_budget_title')}</strong></div>
+      <div>{t('token_meter_budget_chars', { chars: stats.chars, cjk: stats.cjkChars, pct: Math.round(stats.cjkRatio * 100) })}</div>
+      <div>{t('token_meter_budget_tokens')}: <strong>{stats.estimatedTokens}</strong> / {budget.max}</div>
       {stats.cjkChars > 0 && (
         <div style={{ marginTop: 4, color: '#faad14' }}>
-          ⚠ 同等内容英文约 {stats.englishEquivChars} 字符
+          {t('token_meter_english_equiv', { n: stats.englishEquivChars })}
         </div>
       )}
       <div style={{ marginTop: 6, color: '#8c8c8c' }}>
@@ -229,7 +231,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
             <span style={{ cursor: 'default' }}>
               {status.emoji}{' '}
               <span style={{ color: status.color, fontWeight: 600 }}>
-                {status.label} / {status.labelEn}
+                {t(status.labelKey)}
               </span>
               {budget.label && (
                 <span style={{ marginLeft: 6, color: '#8c8c8c' }}>· {budget.label}</span>
@@ -258,7 +260,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
                 onClick={handleOptimize}
                 style={{ fontSize: 11, height: 20, padding: '0 7px', lineHeight: '18px' }}
               >
-                优化 / Optimize
+                {t('token_meter_optimize_button')}
               </Button>
             )}
           </span>
@@ -278,16 +280,16 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
 
       {/* ── Optimize result modal ── */}
       <Modal
-        title="✨ 提示词优化结果 / Prompt Optimization"
+        title={t('token_meter_modal_title')}
         open={modalOpen}
         onCancel={() => { setModalOpen(false); setResult(null) }}
         width={780}
         footer={result ? [
           <Button key="cancel" onClick={() => { setModalOpen(false); setResult(null) }}>
-            取消 / Cancel
+            {t('token_meter_cancel')}
           </Button>,
           <Button key="adopt" type="primary" onClick={handleAdopt}>
-            采用优化版本 / Adopt ✨
+            {t('token_meter_adopt')}
           </Button>,
         ] : null}
       >
@@ -295,7 +297,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
             <Spin size="large" />
             <div style={{ marginTop: 12, color: '#8c8c8c', fontSize: 13 }}>
-              LLM 正在压缩并翻译…
+              {t('token_meter_optimizing')}
             </div>
           </div>
         )}
@@ -310,20 +312,20 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
               fontSize: 12,
             }}>
               <span>
-                <strong>原版：</strong>
+                <strong>{t('token_meter_original_label')}</strong>
                 <Tag color={getStatus(result.original_tokens, budget).emoji === '🔴' ? 'red' : getStatus(result.original_tokens, budget).emoji === '🟠' ? 'orange' : 'gold'}>
                   {result.original_tokens} tok
                 </Tag>
-                {result.original_chars} 字符
+                {t('token_meter_chars_suffix', { n: result.original_chars })}
               </span>
               <span style={{ color: '#52c41a', fontWeight: 700 }}>→</span>
               <span>
-                <strong>优化后：</strong>
+                <strong>{t('token_meter_optimized_label')}</strong>
                 <Tag color="green">{result.optimized_tokens} tok</Tag>
-                {result.optimized_chars} 字符
+                {t('token_meter_chars_suffix', { n: result.optimized_chars })}
               </span>
               <span style={{ marginLeft: 'auto', color: '#52c41a', fontWeight: 600 }}>
-                节省 {result.original_tokens - result.optimized_tokens} tok
+                {t('token_meter_saved_tokens', { n: result.original_tokens - result.optimized_tokens })}
                 （-{Math.round((1 - result.optimized_tokens / result.original_tokens) * 100)}%）
               </span>
             </div>
@@ -332,7 +334,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: '#8c8c8c' }}>
-                  原版 / Original
+                  {t('token_meter_tab_original')}
                 </div>
                 <textarea
                   readOnly
@@ -348,7 +350,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
               </div>
               <div>
                 <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: '#52c41a' }}>
-                  优化版 / Optimized ✨
+                  {t('token_meter_tab_optimized')}
                 </div>
                 <textarea
                   readOnly
@@ -365,7 +367,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
             </div>
 
             <div style={{ marginTop: 10, fontSize: 12, color: '#8c8c8c' }}>
-              💡 点击「采用优化版本」将替换编辑区内容。如需调整，采用后可继续手动编辑。
+              {t('token_meter_adopt_hint')}
             </div>
           </div>
         )}

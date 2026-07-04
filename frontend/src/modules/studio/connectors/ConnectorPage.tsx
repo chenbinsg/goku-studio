@@ -178,7 +178,7 @@ const ConnectorPage: React.FC = () => {
                   type={c.configured ? 'default' : 'primary'}
                   style={{ marginTop: 4, width: '100%' }}
                 >
-                  {c.configured ? '查看 / 修改配置' : '立即配置'}
+                  {c.configured ? t('connector_view_edit_config') : t('connector_configure_now')}
                 </Button>
               </Space>
             </Card>
@@ -189,14 +189,14 @@ const ConnectorPage: React.FC = () => {
       <Alert
         type="info"
         showIcon
-        message="提示"
+        message={t('connector_hint_title')}
         description={
           <span>
-            连接器的详细配置（API 密钥、Webhook URL、测试连接等）在
+            {t('connector_hint_prefix')}
             <Button type="link" style={{ padding: '0 4px' }} onClick={() => goToRuntime('/system/connectors', token, refreshToken)}>
-              系统设置 → 消息连接器配置
+              {t('connector_hint_link')}
             </Button>
-            页面进行。
+            {t('connector_hint_suffix')}
           </span>
         }
         style={{ marginBottom: 24 }}

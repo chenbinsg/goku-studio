@@ -1,4 +1,5 @@
 import React, { useRef, useState, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Alert, Button, Tag, Tooltip } from 'antd'
 import {
   SoundOutlined,
@@ -20,6 +21,7 @@ const VOICE_LABELS: Record<string, string> = {
 }
 
 const VoicePlayerCard: React.FC<Props> = ({ card, onAction }) => {
+  const { t } = useTranslation()
   const data = card.data as VoiceResultCardData
   const audioRef = useRef<HTMLAudioElement>(null)
   const [playing, setPlaying]         = useState(false)
@@ -41,7 +43,7 @@ const VoicePlayerCard: React.FC<Props> = ({ card, onAction }) => {
       <div style={containerStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <LoadingOutlined style={{ fontSize: 20, color: '#34d399' }} />
-          <span style={{ fontSize: 14, color: '#d1fae5' }}>正在合成语音…</span>
+          <span style={{ fontSize: 14, color: '#d1fae5' }}>{t('card_voice_synthesizing')}</span>
         </div>
       </div>
     )
@@ -53,8 +55,8 @@ const VoicePlayerCard: React.FC<Props> = ({ card, onAction }) => {
         type="warning"
         showIcon
         icon={<SoundOutlined />}
-        message="语音合成失败"
-        description={data?.error ?? '未知错误'}
+        message={t('card_voice_failed')}
+        description={data?.error ?? t('card_unknown_error')}
         style={{ borderRadius: 8 }}
       />
     )
@@ -121,7 +123,7 @@ const VoicePlayerCard: React.FC<Props> = ({ card, onAction }) => {
                 onClick={() => setExpanded(p => !p)}
                 style={{ color: '#34d399', cursor: 'pointer', marginLeft: 4, fontSize: 12 }}
               >
-                {expanded ? '收起' : '展开'}
+                {expanded ? t('card_collapse') : t('card_expand')}
               </span>
             )}
           </div>
@@ -132,7 +134,7 @@ const VoicePlayerCard: React.FC<Props> = ({ card, onAction }) => {
               {VOICE_LABELS[voice] ?? voice}
             </Tag>
             {isMock && (
-              <Tag color="orange" style={{ fontSize: 11 }}>Mock 模式</Tag>
+              <Tag color="orange" style={{ fontSize: 11 }}>{t('card_mock_mode')}</Tag>
             )}
             <Tag color="cyan" style={{ fontSize: 11 }}>
               ~{totalDur.toFixed(1)}s
@@ -204,7 +206,7 @@ const VoicePlayerCard: React.FC<Props> = ({ card, onAction }) => {
 
         <div style={{ flex: 1 }} />
 
-        <Tooltip title="下载音频">
+        <Tooltip title={t('card_download_audio')}>
           <Button
             icon={<DownloadOutlined />}
             size="small"
@@ -227,7 +229,7 @@ const VoicePlayerCard: React.FC<Props> = ({ card, onAction }) => {
         display: 'flex', justifyContent: 'space-between',
       }}>
         <span>TTS · {provider || 'openai'}</span>
-        {genTime > 0 && <span>生成耗时 {genTime}s</span>}
+        {genTime > 0 && <span>{t('card_gen_time', { n: genTime })}</span>}
       </div>
     </div>
   )

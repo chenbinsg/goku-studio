@@ -117,7 +117,7 @@ const KnowledgeList: React.FC = () => {
       if (fileList.length > 0) {
         const file = fileList[0]
         const key = 'upload-progress'
-        message.loading({ content: `正在上传并解析文档，请稍候…`, key, duration: 0 })
+        message.loading({ content: t('knowledge_uploading'), key, duration: 0 })
         const blob = (file.originFileObj ?? file) as Blob
         const formData = new FormData()
         formData.append('file', blob, file.name)

@@ -67,7 +67,7 @@ const MusicPlayerCard: React.FC<Props> = ({ card, onAction }) => {
         showIcon
         icon={<SoundOutlined />}
         message={t('music_card_generation_failed')}
-        description={data?.error ?? '未知错误'}
+        description={data?.error ?? t('card_unknown_error')}
         style={{ borderRadius: 8 }}
       />
     )

@@ -30,6 +30,7 @@ import {
   PauseCircleOutlined,
   ReloadOutlined,
 } from '@ant-design/icons'
+import { useTranslation } from 'react-i18next'
 import { agentInstanceApi, AgentInstanceSlot, AgentTypeStatus } from '../api'
 import { useAuthStore } from '../stores/auth'
 
@@ -49,6 +50,7 @@ function fmtDuration(sec: number): string {
 }
 
 const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClose }) => {
+  const { t } = useTranslation()
   const [status, setStatus] = useState<AgentTypeStatus | null>(null)
   const [loading, setLoading] = useState(false)
   const [scaleValue, setScaleValue] = useState<number | null>(null)
@@ -83,10 +85,10 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
   const handleCancelQueued = async (requestId: string) => {
     try {
       await agentInstanceApi.cancelQueued(agentType, requestId)
-      message.success('已取消排队请求')
+      message.success(t('agent_instance_cancel_queued_success'))
       refresh()
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || '取消失败')
+      message.error(e?.response?.data?.detail || t('agent_instance_cancel_failure'))
     }
   }
 
@@ -95,10 +97,10 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
     setScaling(true)
     try {
       const res = await agentInstanceApi.scale(agentType, scaleValue)
-      message.success(`已调整为 ${res.new_count} 个槽位`)
+      message.success(t('agent_instance_resize_success', { n: res.new_count }))
       refresh()
     } catch (e: any) {
-      message.error(e?.response?.data?.detail || '调整失败')
+      message.error(e?.response?.data?.detail || t('agent_instance_resize_failure'))
     } finally {
       setScaling(false)
     }
@@ -106,24 +108,24 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
 
   const slotColumns = [
     {
-      title: '槽位',
+      title: t('agent_instance_col_slot'),
       dataIndex: 'slot_id',
       key: 'slot_id',
       render: (id: string) => <Text code style={{ fontSize: 11 }}>{id.split('#')[1] ?? id}</Text>,
       width: 50,
     },
     {
-      title: '状态',
+      title: t('agent_instance_col_status'),
       dataIndex: 'status',
       key: 'status',
       width: 70,
       render: (s: string) =>
         s === 'busy'
-          ? <Badge status="processing" text={<Text style={{ fontSize: 12 }}>运行中</Text>} />
-          : <Badge status="default" text={<Text type="secondary" style={{ fontSize: 12 }}>空闲</Text>} />,
+          ? <Badge status="processing" text={<Text style={{ fontSize: 12 }}>{t('agent_instance_status_busy')}</Text>} />
+          : <Badge status="default" text={<Text type="secondary" style={{ fontSize: 12 }}>{t('agent_instance_status_idle')}</Text>} />,
     },
     {
-      title: '任务',
+      title: t('agent_instance_col_task'),
       dataIndex: 'task_id',
       key: 'task_id',
       ellipsis: true,
@@ -133,7 +135,7 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
           : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>,
     },
     {
-      title: '渠道',
+      title: t('agent_instance_col_channel'),
       dataIndex: 'channel',
       key: 'channel',
       width: 70,
@@ -141,7 +143,7 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
         ch ? <Tag style={{ fontSize: 10 }}>{ch}</Tag> : null,
     },
     {
-      title: '时长',
+      title: t('agent_instance_col_duration'),
       dataIndex: 'duration_sec',
       key: 'duration_sec',
       width: 65,
@@ -160,13 +162,13 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
       render: (id: string) => <Text code style={{ fontSize: 11 }}>{id.slice(0, 8)}…</Text>,
     },
     {
-      title: '渠道',
+      title: t('agent_instance_col_channel'),
       dataIndex: 'channel',
       key: 'channel',
       render: (ch: string | null) => ch ? <Tag style={{ fontSize: 10 }}>{ch}</Tag> : '—',
     },
     {
-      title: '等待',
+      title: t('agent_instance_col_wait'),
       dataIndex: 'waited_sec',
       key: 'waited_sec',
       render: (sec: number) => <Text style={{ fontSize: 11 }}>{fmtDuration(sec)}</Text>,
@@ -177,10 +179,10 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
       width: 60,
       render: (_: any, row: any) => (
         <Popconfirm
-          title="取消此排队请求？"
+          title={t('agent_instance_cancel_confirm')}
           onConfirm={() => handleCancelQueued(row.request_id)}
-          okText="取消"
-          cancelText="保留"
+          okText={t('agent_instance_cancel_ok')}
+          cancelText={t('agent_instance_cancel_keep')}
         >
           <Button size="small" type="text" danger icon={<CloseOutlined />} />
         </Popconfirm>
@@ -210,12 +212,12 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
         <Space>
           <span>🤖</span>
           <span style={{ fontWeight: 600 }}>{agentName}</span>
-          <Tag color="blue" style={{ fontSize: 11 }}>并发状态</Tag>
+          <Tag color="blue" style={{ fontSize: 11 }}>{t('agent_instance_concurrency_tag')}</Tag>
           {status && (
             <Space size={4}>
-              <Badge status="processing" text={<Text style={{ fontSize: 12 }}>{status.busy} 运行</Text>} />
-              <Badge status="default" text={<Text type="secondary" style={{ fontSize: 12 }}>{status.idle} 空闲</Text>} />
-              {status.queued > 0 && <Badge status="warning" text={<Text style={{ fontSize: 12, color: '#faad14' }}>{status.queued} 排队</Text>} />}
+              <Badge status="processing" text={<Text style={{ fontSize: 12 }}>{t('agent_instance_badge_busy', { n: status.busy })}</Text>} />
+              <Badge status="default" text={<Text type="secondary" style={{ fontSize: 12 }}>{t('agent_instance_badge_idle', { n: status.idle })}</Text>} />
+              {status.queued > 0 && <Badge status="warning" text={<Text style={{ fontSize: 12, color: '#faad14' }}>{t('agent_instance_badge_queued', { n: status.queued })}</Text>} />}
             </Space>
           )}
         </Space>
@@ -248,7 +250,7 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
             }}
           >
             <ExpandAltOutlined style={{ color: '#6366f1', fontSize: 16 }} />
-            <Text style={{ fontSize: 13 }}>最大槽位数：</Text>
+            <Text style={{ fontSize: 13 }}>{t('agent_instance_max_slots_label')}</Text>
             <InputNumber
               min={1}
               max={50}
@@ -264,15 +266,15 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
               onClick={handleScale}
               disabled={scaleValue === status.total_slots}
             >
-              应用
+              {t('agent_instance_apply')}
             </Button>
-            <Text type="secondary" style={{ fontSize: 11 }}>（仅限空闲槽位缩减，忙碌中的不受影响）</Text>
+            <Text type="secondary" style={{ fontSize: 11 }}>{t('agent_instance_resize_hint')}</Text>
           </div>
         )}
 
         {/* Slot table */}
         <Title level={5} style={{ marginBottom: 8, fontSize: 13 }}>
-          槽位列表 {status && <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>（共 {status.total_slots} 个）</Text>}
+          {t('agent_instance_slot_list')} {status && <Text type="secondary" style={{ fontSize: 12, fontWeight: 400 }}>{t('agent_instance_slot_total', { n: status.total_slots })}</Text>}
         </Title>
         <Table
           dataSource={allSlots}
@@ -289,7 +291,7 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
           <>
             <Title level={5} style={{ marginBottom: 8, fontSize: 13, color: '#faad14' }}>
               <PauseCircleOutlined style={{ marginRight: 6 }} />
-              排队等待 ({status.queued})
+              {t('agent_instance_queued_section')} ({status.queued})
             </Title>
             <Table
               dataSource={status.queue}

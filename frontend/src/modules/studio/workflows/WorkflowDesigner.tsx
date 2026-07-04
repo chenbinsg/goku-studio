@@ -751,9 +751,9 @@ const WorkflowDesignerInner: React.FC = () => {
         {type === 'code' && (
           <>
             <Form.Item
-              label="Python 代码"
+              label={t('wf_python_code_label')}
               name="code"
-              extra="可用 _vars 读取上游变量，写入 _output 传递给下游节点"
+              extra={t('wf_python_code_extra')}
             >
               <Input.TextArea
                 rows={10}
@@ -762,13 +762,13 @@ const WorkflowDesignerInner: React.FC = () => {
               />
             </Form.Item>
             <Form.Item
-              label="输出变量名"
+              label={t('wf_output_var_label')}
               name="output_variable"
-              extra="可选：将 _output 整体存入此工作流变量"
+              extra={t('wf_output_var_extra')}
             >
               <Input placeholder="scan_result" />
             </Form.Item>
-            <Form.Item label="超时（秒）" name="timeout">
+            <Form.Item label={t('wf_timeout_label')} name="timeout">
               <InputNumber min={1} max={300} style={{ width: '100%' }} />
             </Form.Item>
           </>
