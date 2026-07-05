@@ -12,7 +12,7 @@ import type { MenuProps } from 'antd'
 import {
   PlusOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, ApiOutlined,
   ThunderboltOutlined, SearchOutlined, EyeOutlined, SyncOutlined, MoreOutlined,
-  PoweroffOutlined, PlayCircleOutlined, LinkOutlined,
+  PoweroffOutlined, PlayCircleOutlined, LinkOutlined, ClearOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -123,6 +123,55 @@ const McpServerList: React.FC = () => {
   const reloadAll = () => {
     fetchStats()
     fetchList()
+  }
+
+  const [reconciling, setReconciling] = useState(false)
+  // Clean up ORPHAN knowledge: docs for MCP servers that were deleted/disabled/
+  // gone but whose knowledge lingered (the inline purge is best-effort). Always a
+  // dry run first — show the orphan list, delete only on explicit confirm. Only
+  // touches mcp:* knowledge.
+  const onReconcileKnowledge = async () => {
+    setReconciling(true)
+    try {
+      const dry = await api.post<{ orphans: string[]; kept: number }>(
+        '/mcp-servers/knowledge/reconcile?delete=false', {},
+      )
+      const orphans = dry?.orphans || []
+      if (orphans.length === 0) {
+        message.success(t('mcp_server_list_reconcile_none'))
+        return
+      }
+      Modal.confirm({
+        title: t('mcp_server_list_reconcile_title'),
+        width: 520,
+        icon: <ClearOutlined />,
+        content: (
+          <div>
+            <p>{t('mcp_server_list_reconcile_desc', { count: orphans.length })}</p>
+            <ul style={{ maxHeight: 220, overflow: 'auto', paddingLeft: 20 }}>
+              {orphans.map((c) => <li key={c}><code>{c}</code></li>)}
+            </ul>
+          </div>
+        ),
+        okText: t('mcp_server_list_reconcile_ok'),
+        okButtonProps: { danger: true },
+        cancelText: t('mcp_server_list_reconcile_cancel'),
+        onOk: async () => {
+          const res = await api.post<{ deleted_docs: number; orphans: string[] }>(
+            '/mcp-servers/knowledge/reconcile?delete=true', {},
+          )
+          message.success(t('mcp_server_list_reconcile_done', {
+            servers: res?.orphans?.length || 0,
+            docs: res?.deleted_docs || 0,
+          }))
+          reloadAll()
+        },
+      })
+    } catch (e) {
+      message.error(t('mcp_server_list_reconcile_failed'))
+    } finally {
+      setReconciling(false)
+    }
   }
 
   const onCreate = () => {
@@ -354,6 +403,11 @@ const McpServerList: React.FC = () => {
           <Tooltip title={t('mcp_server_list_external_conn_tooltip')}>
             <Button icon={<LinkOutlined />} onClick={() => navigate('/mcp-connections')}>
               {t('mcp_server_list_external_conn_button')}
+            </Button>
+          </Tooltip>
+          <Tooltip title={t('mcp_server_list_reconcile_tooltip')}>
+            <Button icon={<ClearOutlined />} loading={reconciling} onClick={onReconcileKnowledge}>
+              {t('mcp_server_list_reconcile_button')}
             </Button>
           </Tooltip>
           <Button icon={<ReloadOutlined />} onClick={reloadAll}>{t('mcp_server_list_refresh_button')}</Button>
