@@ -425,20 +425,26 @@ def delete_knowledge(
         raise HTTPException(status_code=403, detail="Access denied: tenant mismatch")
 
     doc_title = doc.title
-    # Collect all vector IDs to delete from the vector store
-    vector_ids = [vid for vid in [doc.vector_id] if vid]
-
-    # Find and remove all chunk records
+    # Collect all vector IDs (parent + chunks) BEFORE deleting any rows.
     chunks = db.query(models.KnowledgeDoc).filter(
         models.KnowledgeDoc.parent_id == doc_id
     ).all()
-    for chunk in chunks:
-        if chunk.vector_id:
-            vector_ids.append(chunk.vector_id)
-        db.delete(chunk)
+    vector_ids = [vid for vid in [doc.vector_id, *(c.vector_id for c in chunks)] if vid]
 
-    # Delete the parent document
-    db.delete(doc)
+    # Delete children BEFORE the parent. knowledge_docs.parent_id is a
+    # self-referential FK (NO ACTION, not CASCADE) with no mapped ORM
+    # relationship, so SQLAlchemy's unit-of-work does NOT guarantee that the
+    # per-chunk db.delete() flush precedes the parent db.delete() — emitting the
+    # parent DELETE first raises IntegrityError 1451, which 500s the request for
+    # every doc that has chunks (i.e. any doc > 1000 chars). Explicit bulk
+    # deletes execute in the exact order written. Same FK-order fix as
+    # delete_workflow.
+    db.query(models.KnowledgeDoc).filter(
+        models.KnowledgeDoc.parent_id == doc_id
+    ).delete(synchronize_session=False)
+    db.query(models.KnowledgeDoc).filter(
+        models.KnowledgeDoc.id == doc_id
+    ).delete(synchronize_session=False)
     db.commit()
     auth.log_audit_action(db, current_user.id, "delete_knowledge_doc", "knowledge_doc", doc_id,
                           {"title": doc_title, "vectors_removed": len(vector_ids)}, request=request)
