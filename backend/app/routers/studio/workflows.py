@@ -1,6 +1,5 @@
 import uuid
 import json
-import threading
 from datetime import datetime
 from io import BytesIO
 from urllib.parse import quote
