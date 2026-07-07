@@ -413,86 +413,46 @@ def update_workflow(
 
 
 @router.post("/{workflow_id}/execute", response_model=schemas.WorkflowExecuteResponse)
-def execute_workflow(workflow_id: str, execute_data: schemas.WorkflowExecute, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
-    from app.services import workflow as wf_svc
+async def execute_workflow(
+    workflow_id: str,
+    execute_data: schemas.WorkflowExecute,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    from app.services import core_runtime_proxy
+
     workflow = _workflow_query(db).filter(models.Workflow.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    validation = wf_svc.validate(workflow.dag)
-    if not validation["valid"]:
-        raise HTTPException(status_code=422, detail=f"Invalid DAG: {'; '.join(validation['errors'])}")
-    variables = dict(workflow.variables or {})
-    variables.update(execute_data.variables or {})
-    workflow_dag = workflow.dag
-    execution = models.WorkflowExecution(id=str(uuid.uuid4()), workflow_id=workflow_id, variables=variables)
-    db.add(execution)
-    db.flush()
-    execution_id = execution.id
-    started_at = execution.started_at
-    db.commit()
-    if not execute_data.dry_run:
-        threading.Thread(target=wf_svc.start_execution, args=(workflow_id, workflow_dag, variables, execution_id), daemon=True).start()
-    return {"execution_id": execution_id, "status": "running" if not execute_data.dry_run else "dry_run", "started_at": started_at}
+
+    payload = execute_data.model_dump(mode="json") if hasattr(execute_data, "model_dump") else execute_data.dict()
+    return await core_runtime_proxy.post_to_core(
+        request,
+        f"/api/v1/workflows/{workflow_id}/execute",
+        payload,
+    )
 
 
 @router.post("/{workflow_id}/executions/{execution_id}/resume")
-def resume_workflow(
+async def resume_workflow(
     workflow_id: str,
     execution_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
     """Resume a workflow execution that was paused at an approval node."""
-    from app.services.workflow_engine import run_dag
+    from app.services import core_runtime_proxy
 
     workflow = _workflow_query(db).filter(models.Workflow.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
-
-    execution = db.query(models.WorkflowExecution).filter(
-        models.WorkflowExecution.id == execution_id
-    ).first()
-    if not execution:
-        raise HTTPException(status_code=404, detail="Execution not found")
-    if execution.status != "waiting_approval":
-        raise HTTPException(status_code=422, detail=f"Execution is not waiting for approval (status={execution.status})")
-
-    # Get saved state
-    saved_vars = dict(execution.variables or {})
-    resume_layer = saved_vars.pop("_resume_from_layer", 0)
-
-    # Resume DAG execution in background
-    def _resume():
-        try:
-            result = run_dag(
-                dag=workflow.dag,
-                variables=saved_vars,
-                execution_id=execution_id,
-                resume_from_layer=resume_layer,
-            )
-            from app.db import SessionLocal
-            rdb = SessionLocal()
-            try:
-                ex = rdb.query(models.WorkflowExecution).filter(
-                    models.WorkflowExecution.id == execution_id
-                ).first()
-                if ex:
-                    if result["status"] == "waiting_approval":
-                        ex.status = "waiting_approval"
-                        ex.variables = {**result.get("output", {}), "_resume_from_layer": result.get("resume_from_layer", 0)}
-                    else:
-                        ex.status = result["status"]
-                        from datetime import datetime
-                        ex.completed_at = datetime.utcnow()
-                    rdb.commit()
-            finally:
-                rdb.close()
-        except Exception:
-            pass
-
-    threading.Thread(target=_resume, daemon=True).start()
-
-    return {"execution_id": execution_id, "status": "resuming"}
+    return await core_runtime_proxy.post_to_core(
+        request,
+        f"/api/v1/workflows/{workflow_id}/executions/{execution_id}/resume",
+        {},
+    )
 
 
 @router.delete("/{workflow_id}", status_code=204)
@@ -538,49 +498,24 @@ async def trigger_workflow(
     db: Session = Depends(get_db),
 ):
     """Trigger a workflow execution via webhook. No auth required if workflow has webhook trigger."""
-    from app.services import workflow as wf_svc
-
-    workflow = _workflow_query(db).filter(models.Workflow.id == workflow_id).first()
-    if not workflow:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-
-    # Verify webhook trigger is configured
-    triggers = workflow.triggers or []
-    webhook_trigger = _find_webhook_trigger(triggers)
-    if not webhook_trigger:
-        raise HTTPException(status_code=403, detail="Workflow does not have a webhook trigger configured")
+    from app.config import settings
+    import httpx
 
     request_body = await request.body()
-    _verify_workflow_webhook_request(webhook_trigger, request_body, request)
-
-    validation = wf_svc.validate(workflow.dag)
-    if not validation["valid"]:
-        raise HTTPException(status_code=422, detail=f"Invalid DAG: {'; '.join(validation['errors'])}")
-
-    variables = dict(workflow.variables or {})
-    if payload:
-        variables.update(payload)
-    variables["_trigger"] = "webhook"
-    workflow_dag = workflow.dag
-
-    execution = models.WorkflowExecution(
-        id=str(uuid.uuid4()),
-        workflow_id=workflow_id,
-        variables=variables,
-    )
-    db.add(execution)
-    db.flush()
-    execution_id = execution.id
-    started_at = execution.started_at
-    db.commit()
-
-    threading.Thread(
-        target=wf_svc.start_execution,
-        args=(workflow_id, workflow_dag, variables, execution_id),
-        daemon=True,
-    ).start()
-
-    return {"execution_id": execution_id, "status": "running", "started_at": started_at}
+    headers = dict(request.headers)
+    url = settings.CORE_API_URL.rstrip("/") + f"/api/v1/workflows/{workflow_id}/trigger"
+    try:
+        async with httpx.AsyncClient(timeout=settings.CORE_API_TIMEOUT_SECS) as client:
+            resp = await client.post(url, content=request_body, headers=headers)
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"无法连接 goku-core runtime（{settings.CORE_API_URL}）：{exc}") from exc
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text[:500])
+        except ValueError:
+            detail = resp.text[:500]
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+    return resp.json()
 
 
 # ─── Execution monitoring endpoints ──────────────────────────────────────────
@@ -669,28 +604,28 @@ async def stream_execution_events(
     db: Session = Depends(get_db),
 ):
     """SSE stream for real-time execution monitoring."""
-    from fastapi.responses import StreamingResponse
-    from app.services import event_bus
-    import asyncio
-    import json
+    from app.config import settings
+    import httpx
 
     _require_request_user(request, db)
 
+    url = settings.CORE_API_URL.rstrip("/") + f"/api/v1/workflows/{workflow_id}/executions/{execution_id}/events"
+    headers = {}
+    authorization = request.headers.get("authorization")
+    if authorization:
+        headers["Authorization"] = authorization
+
     async def event_generator():
-        queue = asyncio.Queue()
-        event_bus.subscribe(execution_id, queue)
         try:
-            yield f"data: {json.dumps({'type': 'connected', 'execution_id': execution_id})}\n\n"
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=30)
-                    yield f"data: {json.dumps(event, default=str)}\n\n"
-                    if event.get("type") in ("execution_completed", "execution_failed", "execution_cancelled"):
-                        break
-                except asyncio.TimeoutError:
-                    yield "data: {\"type\":\"heartbeat\"}\n\n"
-        finally:
-            event_bus.unsubscribe(execution_id, queue)
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream("GET", url, headers=headers) as resp:
+                    if resp.status_code >= 400:
+                        yield f"data: {{\"type\":\"error\",\"status_code\":{resp.status_code}}}\n\n"
+                        return
+                    async for chunk in resp.aiter_bytes():
+                        yield chunk
+        except httpx.RequestError as exc:
+            yield f"data: {{\"type\":\"error\",\"message\":\"无法连接 goku-core runtime: {str(exc)}\"}}\n\n"
 
     return StreamingResponse(
         event_generator(),
@@ -700,14 +635,15 @@ async def stream_execution_events(
 
 
 @router.post("/{workflow_id}/executions/{execution_id}/cancel")
-def cancel_execution(
+async def cancel_execution(
     workflow_id: str,
     execution_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
     """Cancel a running workflow execution."""
-    from app.services import event_bus
+    from app.services import core_runtime_proxy
     execution = db.query(models.WorkflowExecution).filter(
         models.WorkflowExecution.id == execution_id,
         models.WorkflowExecution.workflow_id == workflow_id,
@@ -721,20 +657,24 @@ def cancel_execution(
     execution.cancelled_at = datetime.utcnow()
     db.commit()
 
-    event_bus.publish(execution_id, {"type": "execution_cancelled", "execution_id": execution_id})
-    return {"execution_id": execution_id, "status": "cancelling"}
+    return await core_runtime_proxy.post_to_core(
+        request,
+        f"/api/v1/workflows/{workflow_id}/executions/{execution_id}/cancel",
+        {},
+    )
 
 
 @router.post("/{workflow_id}/executions/{execution_id}/retry-from-layer")
-def retry_from_layer(
+async def retry_from_layer(
     workflow_id: str,
     execution_id: str,
+    request: Request,
     body: dict = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
     """Retry a failed workflow execution from a specific layer checkpoint."""
-    from app.services import workflow as wf_svc
+    from app.services import core_runtime_proxy
 
     workflow = _workflow_query(db).filter(models.Workflow.id == workflow_id).first()
     if not workflow:
@@ -747,28 +687,8 @@ def retry_from_layer(
     if not old_exec:
         raise HTTPException(status_code=404, detail="Execution not found")
 
-    body = body or {}
-    layer = body.get("layer", old_exec.resume_from_layer or 0)
-
-    # Create new execution starting from checkpoint
-    workflow_dag = workflow.dag
-    new_exec = models.WorkflowExecution(
-        id=str(uuid.uuid4()),
-        workflow_id=workflow_id,
-        status="running",
-        variables=old_exec.variables,
-        resume_from_layer=layer,
+    return await core_runtime_proxy.post_to_core(
+        request,
+        f"/api/v1/workflows/{workflow_id}/executions/{execution_id}/retry-from-layer",
+        body or {},
     )
-    db.add(new_exec)
-    db.flush()
-    new_execution_id = new_exec.id
-    db.commit()
-
-    threading.Thread(
-        target=wf_svc.start_execution,
-        args=(workflow_id, workflow_dag, old_exec.variables or {}, new_execution_id),
-        kwargs={"resume_from_layer": layer},
-        daemon=True,
-    ).start()
-
-    return {"new_execution_id": new_execution_id, "status": "running", "resume_from_layer": layer}
