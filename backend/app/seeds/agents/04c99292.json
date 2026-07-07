@@ -13,8 +13,7 @@
     "aibi-prod__list_metadata",
     "aibi-prod__query_statistics",
     "aibi-prod__save_report",
-    "push_chart",
-    "@mcp:none"
+    "push_chart"
   ],
   "skills": [
     "payment-transaction-query",

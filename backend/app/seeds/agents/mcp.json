@@ -9,8 +9,7 @@
     "mcp_connection_admin",
     "mcp_server_admin",
     "mcp_authz_admin",
-    "ask_user",
-    "@mcp:none"
+    "ask_user"
   ],
   "skills": [],
   "is_active": 1,

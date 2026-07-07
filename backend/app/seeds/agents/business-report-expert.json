@@ -13,7 +13,6 @@
     "submit_email_draft",
     "teams_message",
     "todo_write",
-    "@mcp:none",
     "aibi-prod__export_csv",
     "aibi-prod__forecast_metric",
     "aibi-prod__generate_report",

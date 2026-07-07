@@ -1271,14 +1271,13 @@ const AgentList: React.FC = () => {
                             const other = allTools.filter(x => !baseSet.has(x.name) && !mcpNames.has(x.name) && !x.name.includes('__'))
                             const mcp = mcpTools.filter(x => !baseSet.has(x.name))
                             const toOpt = (n: string) => ({ value: n, label: n })
+                            // The "@mcp:none" / "@mcp:focus" directive group is retired:
+                            // MCP tool visibility now strictly follows this list (an MCP
+                            // tool is sent to the LLM only when explicitly selected here).
                             return [
                               { label: t('agent_edit_tools_group_base'), options: baseList.map(toOpt) },
                               { label: t('agent_edit_tools_group_other'), options: other.map(x => toOpt(x.name)) },
                               { label: t('agent_edit_tools_group_mcp'), options: mcp.map(x => toOpt(x.name)) },
-                              { label: t('agent_edit_tools_group_directive'), options: [
-                                { value: '@mcp:none', label: (<Tooltip title={t('agent_edit_tools_mcp_none_label')} placement="left"><span>@mcp:none</span></Tooltip>) },
-                                { value: '@mcp:focus', label: (<Tooltip title={t('agent_edit_tools_mcp_focus_label')} placement="left"><span>@mcp:focus</span></Tooltip>) },
-                              ] },
                             ]
                           })()}
                         />

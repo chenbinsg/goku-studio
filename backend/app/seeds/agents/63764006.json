@@ -13,8 +13,7 @@
     "es-prod__es-ListIndexTool",
     "es-prod__es-CountTool",
     "es-prod__es-IndexMappingTool",
-    "es-prod__es-ClusterHealthTool",
-    "@mcp:none"
+    "es-prod__es-ClusterHealthTool"
   ],
   "skills": [
     "elasticsearch-ops"
