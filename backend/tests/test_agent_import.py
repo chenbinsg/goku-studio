@@ -45,3 +45,32 @@ def test_make_unique_agent_slug_avoids_collision():
     slug = _make_unique_agent_slug(_Db({"mcp-admin"}), _AgentModel, "MCP Admin", "12345678-abcd")
 
     assert slug == "mcp-admin-12345678"
+
+
+def test_agent_export_includes_stable_slug():
+    from app.routers.studio.agents import _build_export_payload
+
+    agent = type("Agent", (), {
+        "name": "IR Agent",
+        "slug": "ir-agent",
+        "description": "desc",
+        "agent_type": "general",
+        "department": "IR",
+        "division": None,
+        "category": None,
+        "figure_url": None,
+        "system_prompt_override": "prompt",
+        "skills": [],
+        "allowed_tools": [],
+        "model_override": None,
+        "max_steps": 10,
+        "icon": "RobotOutlined",
+        "color": "#1677ff",
+        "is_active": True,
+        "visibility": "department",
+        "allowed_roles": [],
+    })()
+
+    payload = _build_export_payload(agent)
+
+    assert payload["agent"]["slug"] == "ir-agent"

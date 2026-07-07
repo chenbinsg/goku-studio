@@ -1,5 +1,6 @@
 import uuid
 import json
+import re
 from datetime import datetime
 from io import BytesIO
 from urllib.parse import quote
@@ -123,6 +124,33 @@ def _verify_workflow_webhook_request(trigger: dict, request_body: bytes, request
         raise HTTPException(status_code=409, detail="Webhook request replay detected")
 
 
+def _workflow_portable_key(name: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", (name or "").lower()).strip("-")
+    if base:
+        return base[:120]
+    digest = hashlib.sha1((name or "workflow").encode("utf-8")).hexdigest()[:12]
+    return f"workflow-{digest}"
+
+
+def _workflow_version_bump(version: str | None) -> str:
+    try:
+        major, minor = (version or "1.0").rsplit(".", 1)
+        return f"{major}.{int(minor) + 1}"
+    except Exception:
+        return "1.1"
+
+
+def _find_workflow_for_import(db: Session, workflow_key: str | None, name: str):
+    if workflow_key:
+        for workflow in db.query(models.Workflow).options(
+            load_only(models.Workflow.id, models.Workflow.name, models.Workflow.variables)
+        ).all():
+            variables = workflow.variables or {}
+            if isinstance(variables, dict) and variables.get("_workflow_key") == workflow_key:
+                return workflow
+    return db.query(models.Workflow).filter(models.Workflow.name == name).first()
+
+
 def _require_request_user(request: Request, db: Session) -> models.User:
     token = auth.get_access_token_from_request(request)
     if not token:
@@ -233,16 +261,20 @@ def _build_workflow_export_payload(workflow, db: Session) -> dict:
         ).first()
         if agent:
             agent_slug = agent.slug
+    variables = dict(workflow.variables or {})
+    workflow_key = variables.get("_workflow_key") or _workflow_portable_key(workflow.name)
+    variables["_workflow_key"] = workflow_key
     return {
         "schema": "aios.workflow-export",
         "version": "1.0",
         "exported_at": datetime.utcnow().isoformat() + "Z",
         "workflow": {
             "name": workflow.name,
+            "workflow_key": workflow_key,
             "description": workflow.description,
             "dag": workflow.dag,
             "triggers": _sanitize_workflow_triggers(workflow.triggers),
-            "variables": workflow.variables,
+            "variables": variables,
             "agent_slug": agent_slug,
         },
     }
@@ -275,14 +307,17 @@ def export_workflow(
 @router.post("/import", status_code=201)
 def import_workflow(
     file: UploadFile = File(...),
+    mode: str = Query("upsert", pattern="^(upsert|copy)$"),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
-    """Create a workflow from an exported JSON file.
+    """Import a workflow from an exported JSON file.
 
-    Always creates a NEW workflow (fresh id); a name collision is suffixed with
-    " (Imported)". ``agent_slug`` is resolved to this environment's agent id so the
-    workflow binds to the local agent — this is what makes export/import portable.
+    Default mode is upsert: an existing workflow with the same portable
+    workflow_key, or with the same name for legacy exports, is updated in place.
+    Use ``mode=copy`` to intentionally create a separate imported copy.
+    ``agent_slug`` is resolved to this environment's agent id so the workflow
+    binds to the local agent instead of an environment-specific source UUID.
     """
     try:
         raw = file.file.read()
@@ -298,7 +333,11 @@ def import_workflow(
         raise HTTPException(status_code=400, detail="Import payload is missing workflow.dag")
 
     name = (wf_data.get("name") or "Imported Workflow").strip()
-    if db.query(models.Workflow).filter(models.Workflow.name == name).first():
+    workflow_key = (wf_data.get("workflow_key") or "").strip() or _workflow_portable_key(name)
+    variables = dict(wf_data.get("variables") or {})
+    variables["_workflow_key"] = workflow_key
+
+    if mode == "copy" and db.query(models.Workflow).filter(models.Workflow.name == name).first():
         name = f"{name} (Imported)"
 
     # Resolve agent_slug → this environment's agent id (portable re-binding).
@@ -314,8 +353,46 @@ def import_workflow(
         else:
             agent_missing = True
 
-    workflow_id = str(uuid.uuid4())
     created_at = datetime.utcnow()
+    existing = _find_workflow_for_import(db, workflow_key, name) if mode == "upsert" else None
+    if existing is not None:
+        workflow_id = existing.id
+        existing.name = name
+        existing.description = wf_data.get("description")
+        existing.dag = wf_data["dag"]
+        existing.triggers = _prepare_workflow_triggers(
+            wf_data.get("triggers") or [],
+            existing_triggers=existing.triggers,
+        )
+        existing.variables = variables
+        existing.agent_id = agent_id
+        existing.version = _workflow_version_bump(existing.version)
+        db.commit()
+        auth.log_audit_action(
+            db,
+            current_user.id,
+            "import_workflow_upsert",
+            "workflow",
+            workflow_id,
+            {"name": name, "workflow_key": workflow_key, "source_file": file.filename},
+        )
+        try:
+            from app.tasks.scheduler import reload_schedules
+            reload_schedules()
+        except Exception:
+            pass
+        return {
+            "workflow_id": workflow_id,
+            "name": name,
+            "workflow_key": workflow_key,
+            "action": "updated",
+            "agent_slug": agent_slug,
+            "agent_bound": agent_id is not None,
+            "agent_missing": agent_missing,
+            "imported_at": created_at.isoformat() + "Z",
+        }
+
+    workflow_id = str(uuid.uuid4())
     db.execute(
         models.Workflow.__table__.insert().values(
             id=workflow_id,
@@ -323,7 +400,7 @@ def import_workflow(
             description=wf_data.get("description"),
             dag=wf_data["dag"],
             triggers=_prepare_workflow_triggers(wf_data.get("triggers") or []),
-            variables=wf_data.get("variables") or {},
+            variables=variables,
             version="1.0.0",
             agent_id=agent_id,
             created_at=created_at,
@@ -339,6 +416,8 @@ def import_workflow(
     return {
         "workflow_id": workflow_id,
         "name": name,
+        "workflow_key": workflow_key,
+        "action": "created",
         "agent_slug": agent_slug,
         "agent_bound": agent_id is not None,
         "agent_missing": agent_missing,

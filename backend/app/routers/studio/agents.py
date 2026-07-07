@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -86,6 +86,8 @@ class AgentImportResult(BaseModel):
     id: str
     name: str
     imported_at: str
+    action: str = "created"
+    slug: str | None = None
 
 
 class AgentBatchExportRequest(BaseModel):
@@ -353,9 +355,11 @@ def _build_export_payload(agent) -> dict:
         "exported_at": datetime.utcnow().isoformat() + "Z",
         "agent": {
             "name": agent.name,
+            "slug": getattr(agent, "slug", None),
             "description": agent.description,
             "agent_type": agent.agent_type,
             "department": agent.department,
+            "division": getattr(agent, "division", None),
             "category": getattr(agent, "category", None),
             "figure_url": agent.figure_url,
             "system_prompt_override": agent.system_prompt_override,
@@ -1174,6 +1178,7 @@ def export_agents_batch(
 @router.post("/import", response_model=AgentImportResult)
 def import_agent(
     file: UploadFile = File(...),
+    mode: str = Query("upsert", pattern="^(upsert|copy)$"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user),
 ):
@@ -1191,27 +1196,70 @@ def import_agent(
     if not name:
         raise HTTPException(status_code=400, detail="Imported agent is missing a name")
 
-    final_name = name
-    if db.query(AgentDefinition).filter(AgentDefinition.name == final_name).first():
-        final_name = f"{name} (Imported)"
-        if db.query(AgentDefinition).filter(AgentDefinition.name == final_name).first():
-            final_name = f"{name} (Imported {datetime.utcnow().strftime('%Y%m%d%H%M%S')})"
-
     skills = _filter_valid_skills(agent_data.get("skills") or [])
 
     allowed_tools = agent_data.get("allowed_tools")
     if allowed_tools is not None:
         allowed_tools = _filter_allowed_tools(allowed_tools, base["tools"])
 
-    imported_figure_url = _write_imported_figure(final_name, payload.get("figure_asset"))
+    imported_figure_url = _write_imported_figure(name, payload.get("figure_asset"))
     figure_url = imported_figure_url or agent_data.get("figure_url")
     # Accept /icons/ (workspace) and /api/v1/uploads/ (workspace uploads); drop anything else.
     if figure_url and not (figure_url.startswith("/icons/") or figure_url.startswith("/api/v1/uploads/")):
         figure_url = None
 
     now = datetime.utcnow()
+    stable_slug = (agent_data.get("slug") or "").strip()
+    existing = None
+    if mode == "upsert" and stable_slug:
+        existing = db.query(AgentDefinition).filter(AgentDefinition.slug == stable_slug).first()
+    if mode == "upsert" and existing is None:
+        existing = db.query(AgentDefinition).filter(AgentDefinition.name == name).first()
+
+    if existing is not None:
+        if not _user_can_config(user, existing, db):
+            raise HTTPException(status_code=403, detail="No edit permission for existing agent")
+        existing.name = name
+        existing.description = agent_data.get("description")
+        existing.agent_type = agent_type
+        existing.department = agent_data.get("department")
+        existing.division = agent_data.get("division")
+        existing.category = agent_data.get("category")
+        existing.figure_url = figure_url
+        existing.system_prompt_override = agent_data.get("system_prompt_override")
+        existing.skills = skills
+        existing.allowed_tools = allowed_tools
+        existing.model_override = agent_data.get("model_override")
+        existing.max_steps = agent_data.get("max_steps")
+        existing.icon = agent_data.get("icon") or base.get("icon")
+        existing.color = agent_data.get("color") or base.get("color")
+        existing.is_active = bool(agent_data.get("is_active", True))
+        existing.visibility = agent_data.get("visibility") or ("public" if not agent_data.get("department") else "department")
+        existing.allowed_roles = agent_data.get("allowed_roles") or []
+        existing.updated_at = now
+        db.commit()
+        db.refresh(existing)
+        _write_agent_seed(existing)
+        auth.log_audit_action(db, user.id, "import_agent_upsert", "agent", existing.id, {"name": existing.name, "source_file": file.filename})
+        return {
+            "id": existing.id,
+            "name": existing.name,
+            "slug": existing.slug,
+            "action": "updated",
+            "imported_at": now.isoformat() + "Z",
+        }
+
+    final_name = name
+    if mode == "copy" and db.query(AgentDefinition).filter(AgentDefinition.name == final_name).first():
+        final_name = f"{name} (Imported)"
+        if db.query(AgentDefinition).filter(AgentDefinition.name == final_name).first():
+            final_name = f"{name} (Imported {datetime.utcnow().strftime('%Y%m%d%H%M%S')})"
+
     new_agent_id = str(uuid.uuid4())
-    agent_slug = _make_unique_agent_slug(db, AgentDefinition, final_name, new_agent_id)
+    if mode == "upsert" and stable_slug and not db.query(AgentDefinition).filter(AgentDefinition.slug == stable_slug).first():
+        agent_slug = stable_slug
+    else:
+        agent_slug = _make_unique_agent_slug(db, AgentDefinition, final_name, new_agent_id)
     agent = AgentDefinition(
         id=new_agent_id,
         slug=agent_slug,
@@ -1219,6 +1267,7 @@ def import_agent(
         description=agent_data.get("description"),
         agent_type=agent_type,
         department=agent_data.get("department"),
+        division=agent_data.get("division"),
         category=agent_data.get("category"),
         figure_url=figure_url,
         system_prompt_override=agent_data.get("system_prompt_override"),
@@ -1241,7 +1290,13 @@ def import_agent(
     db.refresh(agent)
     _write_agent_seed(agent)
     auth.log_audit_action(db, user.id, "import_agent", "agent", agent.id, {"name": agent.name, "source_file": file.filename})
-    return {"id": agent.id, "name": agent.name, "imported_at": now.isoformat() + "Z"}
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "slug": agent.slug,
+        "action": "created",
+        "imported_at": now.isoformat() + "Z",
+    }
 
 
 @router.put("/{agent_id}")
