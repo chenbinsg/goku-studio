@@ -762,6 +762,12 @@ class MCPServerSecretsView(BaseModel):
     env_config_configured: bool
     env_config_display: str
     env_config_keys: list[str]  # safe to expose: key names only, values masked
+    # key → masked value preview (first4********last4, or the full mask for
+    # short values). Binding keys (connection_id / server_auth_connection_id)
+    # are excluded — the dropdowns own those. Lets the edit drawer show WHAT
+    # is configured without exposing plaintext; saving a still-masked value
+    # keeps the stored one (update_server mask-keep merge).
+    env_config_preview: dict[str, str] = {}
     env_config_connection_id: str | None = (
         None  # external connection code bound via env_config.connection_id; not a secret, safe to surface so the edit drawer can pre-select the dropdown
     )
@@ -1100,6 +1106,26 @@ class MCPExternalConnectionUpdate(BaseModel):
     config: dict[str, Any] | None = None
     secret: dict[str, Any] | None = None
     allowed_scopes: dict[str, Any] | None = None
+
+
+class MCPTransferImportError(BaseModel):
+    """One failed item in an import file — ``code`` of the entry plus a
+    human-readable reason; the rest of the file is still processed."""
+
+    code: str
+    message: str
+
+
+class MCPTransferImportResult(BaseModel):
+    """Outcome of importing an MCP export bundle (servers or external
+    connections). Import is create-only: ``created`` + ``skipped``
+    (code already exists — never modified) + ``errors`` partition the
+    file's items."""
+
+    total: int
+    created: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
+    errors: list[MCPTransferImportError] = Field(default_factory=list)
 
 
 class MCPExternalConnectionListItem(BaseModel):

@@ -12,9 +12,11 @@ Permissions follow the project convention (same as routers/mcp_servers.py):
 """
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app import auth, models
@@ -26,8 +28,10 @@ from app.schemas import (
     MCPExternalConnectionListItem,
     MCPExternalConnectionListResponse,
     MCPExternalConnectionUpdate,
+    MCPTransferImportResult,
 )
 from app.services import mcp_external_connections as svc
+from app.services import mcp_transfer as transfer
 
 router = APIRouter(prefix="/api/v1/mcp-external-connections", tags=["mcp-external-connections"])
 
@@ -64,6 +68,61 @@ def create_connection(
     the response carries masked secrets only."""
     return MCPExternalConnectionDetail(
         **svc.create_connection(db, payload, user_id=current_user.id, request=request)
+    )
+
+
+@router.get("/export")
+def export_connections(
+    codes: Optional[str] = Query(
+        None, description="逗号分隔的 code 列表;省略则导出全部",
+    ),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(_READ)),
+) -> JSONResponse:
+    """Download active connections as a JSON bundle — one, a selection
+    (``?codes=a,b``), or all (no param). All secret values are replaced
+    by an explanatory placeholder (keys are kept so the receiver knows
+    what to re-enter after import).
+
+    Registered BEFORE ``/{connection_id}`` so the literal path wins.
+    """
+    code_list = [c.strip() for c in codes.split(",") if c.strip()] if codes else None
+    bundle = transfer.export_connections(db, codes=code_list)
+    stem = code_list[0] if code_list and len(code_list) == 1 else "connections"
+    filename = f"mcp-{stem}-{datetime.utcnow():%Y%m%d-%H%M%S}.json"
+    return JSONResponse(
+        content=bundle,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/check-code")
+def check_connection_codes(
+    codes: str = Query(..., description="逗号分隔的 code 列表"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(_READ)),
+) -> dict:
+    """Code-uniqueness probe for the create drawer / import conflict
+    dialog: returns which of the given codes are already taken by an
+    active connection. Registered BEFORE ``/{connection_id}``."""
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    return {"existing": transfer.existing_connection_codes(db, code_list)}
+
+
+@router.post("/import", response_model=MCPTransferImportResult)
+def import_connections(
+    bundle: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission(_WRITE)),
+) -> MCPTransferImportResult:
+    """Create connections from an export bundle. Create-only: items
+    whose ``code`` already exists are skipped (never modified) and
+    reported; placeholder secret values are dropped."""
+    return MCPTransferImportResult(
+        **transfer.import_connections(
+            db, bundle, user_id=current_user.id, request=request,
+        )
     )
 
 

@@ -53,8 +53,11 @@ from app.schemas import (
     MCPServerStats,
     MCPServerUpdate,
     MCPSyncResult,
+    MCPTransferImportResult,
 )
 from datetime import datetime
+from fastapi.responses import JSONResponse
+from app.services import mcp_transfer as transfer
 from app.services import mcp_authorizations as authz
 from app.services import mcp_capabilities as caps
 from app.services import mcp_observability as observe
@@ -100,6 +103,62 @@ def list_mcp_servers(
         size=size,
     )
     return MCPServerListResponse(total=total, items=items)
+
+
+@router.get("/export")
+def export_mcp_servers(
+    codes: Optional[str] = Query(
+        None, description="逗号分隔的 code 列表;省略则导出全部",
+    ),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> JSONResponse:
+    """Download active servers as a JSON bundle — one, a selection
+    (``?codes=a,b``), or all (no param). Secret values are replaced by
+    an explanatory placeholder — the file is safe to share; credentials
+    must be re-entered after import.
+
+    Registered BEFORE ``/{server_id}`` so the literal path wins.
+    """
+    code_list = [c.strip() for c in codes.split(",") if c.strip()] if codes else None
+    bundle = transfer.export_servers(db, codes=code_list)
+    stem = code_list[0] if code_list and len(code_list) == 1 else "servers"
+    filename = f"mcp-{stem}-{datetime.utcnow():%Y%m%d-%H%M%S}.json"
+    return JSONResponse(
+        content=bundle,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/check-code")
+def check_mcp_server_codes(
+    codes: str = Query(..., description="逗号分隔的 code 列表"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> dict:
+    """Code-uniqueness probe for the create drawer / import conflict
+    dialog: returns which of the given codes are already taken by an
+    active server. Registered BEFORE ``/{server_id}``."""
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    return {"existing": transfer.existing_server_codes(db, code_list)}
+
+
+@router.post("/import", response_model=MCPTransferImportResult)
+def import_mcp_servers(
+    bundle: dict,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPTransferImportResult:
+    """Create servers from an export bundle. Create-only: items whose
+    ``code`` already exists are skipped (never modified) and reported;
+    per-item failures land in ``errors`` without aborting the file.
+    """
+    return MCPTransferImportResult(
+        **transfer.import_servers(
+            db, bundle, user_id=current_user.id, request=request,
+        )
+    )
 
 
 @router.get("/{server_id}", response_model=MCPServerDetail)

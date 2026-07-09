@@ -13,6 +13,7 @@ import {
   PlusOutlined, ReloadOutlined, DeleteOutlined, EditOutlined, ApiOutlined,
   ThunderboltOutlined, SearchOutlined, EyeOutlined, SyncOutlined, MoreOutlined,
   PoweroffOutlined, PlayCircleOutlined, LinkOutlined, ClearOutlined,
+  DownloadOutlined,
 } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
@@ -21,6 +22,7 @@ import ServerDrawer, {
   SERVICE_CATEGORY_VALUES, STATUS_COLORS, HEALTH_COLORS, fmt,
   type MCPServerDetail,
 } from './ServerDrawer'
+import { downloadExport, McpImportButton } from './mcpTransfer'
 
 const { Title, Text } = Typography
 
@@ -78,6 +80,22 @@ const McpServerList: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [drawerMode, setDrawerMode] = useState<'create' | 'edit'>('create')
   const [editingDetail, setEditingDetail] = useState<MCPServerDetail | null>(null)
+  // 批量导出:默认不显示复选框,点「导出」进入选择模式才出现;
+  // 勾选存 code,后端导出接口按 code 过滤
+  const [exportMode, setExportMode] = useState(false)
+  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([])
+  const [selectedCodes, setSelectedCodes] = useState<string[]>([])
+
+  const exitExportMode = () => {
+    setExportMode(false)
+    setSelectedKeys([])
+    setSelectedCodes([])
+  }
+
+  const onExportSelected = async () => {
+    await downloadExport('/mcp-servers', 'mcp-servers', selectedCodes)
+    exitExportMode()
+  }
 
   const fetchStats = async () => {
     try {
@@ -279,6 +297,12 @@ const McpServerList: React.FC = () => {
     { key: 'edit', icon: <EditOutlined />, label: t('mcp_server_list_action_edit'), onClick: () => onEdit(server) },
     { key: 'sync', icon: <SyncOutlined />, label: t('mcp_server_list_action_sync'), onClick: () => onSync(server) },
     {
+      key: 'export',
+      icon: <DownloadOutlined />,
+      label: t('mcp_transfer_export_row'),
+      onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code]),
+    },
+    {
       key: 'toggle',
       icon: server.status === 'enabled' ? <PoweroffOutlined /> : <PlayCircleOutlined />,
       label: t(server.status === 'enabled'
@@ -410,6 +434,27 @@ const McpServerList: React.FC = () => {
               {t('mcp_server_list_reconcile_button')}
             </Button>
           </Tooltip>
+          {exportMode ? (
+            <>
+              <Button
+                type="primary"
+                icon={<DownloadOutlined />}
+                disabled={selectedCodes.length === 0}
+                onClick={onExportSelected}
+              >
+                {t('mcp_transfer_export_selected')}
+                {selectedCodes.length > 0 ? ` (${selectedCodes.length})` : ''}
+              </Button>
+              <Button onClick={exitExportMode}>{t('mcp_transfer_export_cancel')}</Button>
+            </>
+          ) : (
+            <Tooltip title={t('mcp_transfer_export_tooltip')}>
+              <Button icon={<DownloadOutlined />} onClick={() => setExportMode(true)}>
+                {t('mcp_transfer_export_button')}
+              </Button>
+            </Tooltip>
+          )}
+          <McpImportButton path="/mcp-servers" onDone={reloadAll} />
           <Button icon={<ReloadOutlined />} onClick={reloadAll}>{t('mcp_server_list_refresh_button')}</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={onCreate}>{t('mcp_server_list_add_button')}</Button>
         </Space>
@@ -503,7 +548,20 @@ const McpServerList: React.FC = () => {
         loading={loading}
         dataSource={servers}
         columns={columns}
-        scroll={{ x: 1400 }}
+        rowSelection={{
+          // 选择列常驻占位(48px),避免进出导出模式时表格列挪动;
+          // 非导出模式只是不渲染复选框
+          selectedRowKeys: selectedKeys,
+          columnWidth: 48,
+          fixed: true,
+          hideSelectAll: !exportMode,
+          renderCell: exportMode ? undefined : () => null,
+          onChange: (keys, rows) => {
+            setSelectedKeys(keys)
+            setSelectedCodes(rows.map((r) => r.code))
+          },
+        }}
+        scroll={{ x: 1448 }}
         locale={{ emptyText: <Empty description={t('mcp_server_list_empty')} /> }}
         pagination={{
           current: page,

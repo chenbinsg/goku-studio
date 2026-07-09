@@ -221,6 +221,7 @@ def _secrets_view(server: MCPServer) -> MCPServerSecretsView:
     auth_set = bool(server.auth_secret)
     env_set = bool(server.env_config)
     env_keys: list[str] = []
+    env_preview: dict[str, str] = {}
     connection_id: Optional[str] = None
     server_auth_connection_id: Optional[str] = None
     if env_set:
@@ -236,6 +237,23 @@ def _secrets_view(server: MCPServer) -> MCPServerSecretsView:
                     raw_auth = data.get("server_auth_connection_id")
                     if isinstance(raw_auth, str) and raw_auth.strip():
                         server_auth_connection_id = raw_auth.strip()
+                    # Masked per-key preview so the edit drawer can show WHAT
+                    # is configured without exposing plaintext: first4/last4
+                    # for long values, full mask for short ones (a 4-char
+                    # prefix of a short token would leak too much). Binding
+                    # keys excluded — the dropdowns surface those. A value
+                    # that still looks masked on save keeps the stored one
+                    # (see the mask-keep merge in update_server).
+                    for k, v in data.items():
+                        if k in ("connection_id", "server_auth_connection_id"):
+                            continue
+                        s = "" if v is None else str(v)
+                        if not s:
+                            env_preview[k] = ""
+                        elif len(s) < 12:
+                            env_preview[k] = encryption.MASK_DISPLAY
+                        else:
+                            env_preview[k] = f"{s[:4]}********{s[-4:]}"
         except Exception as e:
             logger.warning(
                 "env_config decryption failed for server %s: %s",
@@ -247,6 +265,7 @@ def _secrets_view(server: MCPServer) -> MCPServerSecretsView:
         env_config_configured=env_set,
         env_config_display=encryption.mask_secret(server.env_config),
         env_config_keys=env_keys,
+        env_config_preview=env_preview,
         env_config_connection_id=connection_id,
         env_config_server_auth_connection_id=server_auth_connection_id,
     )
@@ -825,6 +844,24 @@ def update_server(
             # as auth_secret. Use clear_env_config=True to actually wipe.
             data.pop("env_config")
         else:
+            # Mask-keep merge: the edit drawer prefills values as masked
+            # previews (env_config_preview). Any incoming value that still
+            # looks masked means "the user did not edit this key" — keep the
+            # stored value instead of persisting the mask string itself.
+            if isinstance(new_env, dict) and server.env_config:
+                try:
+                    _old_plain = encryption.decrypt_secret(server.env_config)
+                    _old_env = json.loads(_old_plain) if _old_plain else {}
+                except Exception:
+                    _old_env = {}
+                if isinstance(_old_env, dict):
+                    for _k, _v in list(new_env.items()):
+                        if (
+                            isinstance(_v, str)
+                            and encryption.looks_like_mask(_v)
+                            and _k in _old_env
+                        ):
+                            new_env[_k] = _old_env[_k]
             # `start_command` may also be updated in the same PATCH —
             # validate against the post-update value so needs-connection
             # check reflects the final state of the row.

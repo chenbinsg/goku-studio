@@ -15,12 +15,13 @@ import {
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, EditOutlined,
   DeleteOutlined, PoweroffOutlined, PlayCircleOutlined, LinkOutlined,
-  ArrowLeftOutlined,
+  ArrowLeftOutlined, DownloadOutlined,
 } from '@ant-design/icons'
 import { Link, useNavigate } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import i18n from 'i18next'
 import { api } from '@/api'
+import { downloadExport, fetchExistingCodes, McpImportButton } from './mcpTransfer'
 
 const { Title, Text } = Typography
 
@@ -108,7 +109,23 @@ const McpExternalConnections: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [editing, setEditing] = useState<Connection | null>(null)
   const [saving, setSaving] = useState(false)
+  // 批量导出:默认不显示复选框,点「导出」进入选择模式才出现;
+  // 勾选存 code,后端导出接口按 code 过滤
+  const [exportMode, setExportMode] = useState(false)
+  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([])
+  const [selectedCodes, setSelectedCodes] = useState<string[]>([])
   const [form] = Form.useForm()
+
+  const exitExportMode = () => {
+    setExportMode(false)
+    setSelectedKeys([])
+    setSelectedCodes([])
+  }
+
+  const onExportSelected = async () => {
+    await downloadExport('/mcp-external-connections', 'mcp-connections', selectedCodes)
+    exitExportMode()
+  }
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -271,6 +288,10 @@ const McpExternalConnections: React.FC = () => {
           <Tooltip title={t('mcp_conn_action_test')}>
             <Button size="small" icon={<ThunderboltOutlined />} onClick={() => onTest(row)} />
           </Tooltip>
+          <Tooltip title={t('mcp_transfer_export_row')}>
+            <Button size="small" icon={<DownloadOutlined />}
+                    onClick={() => downloadExport('/mcp-external-connections', 'mcp-connections', [row.code])} />
+          </Tooltip>
           <Button size="small" icon={row.enabled ? <PoweroffOutlined /> : <PlayCircleOutlined />}
                   onClick={() => onToggle(row)}>
             {t(row.enabled ? 'mcp_conn_action_disable' : 'mcp_conn_action_enable')}
@@ -299,6 +320,27 @@ const McpExternalConnections: React.FC = () => {
           <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/mcp')}>
             {t('mcp_conn_btn_back')}
           </Button>
+          {exportMode ? (
+            <>
+              <Button
+                type="primary"
+                icon={<DownloadOutlined />}
+                disabled={selectedCodes.length === 0}
+                onClick={onExportSelected}
+              >
+                {t('mcp_transfer_export_selected')}
+                {selectedCodes.length > 0 ? ` (${selectedCodes.length})` : ''}
+              </Button>
+              <Button onClick={exitExportMode}>{t('mcp_transfer_export_cancel')}</Button>
+            </>
+          ) : (
+            <Tooltip title={t('mcp_transfer_export_tooltip')}>
+              <Button icon={<DownloadOutlined />} onClick={() => setExportMode(true)}>
+                {t('mcp_transfer_export_button')}
+              </Button>
+            </Tooltip>
+          )}
+          <McpImportButton path="/mcp-external-connections" onDone={reload} />
           <Button icon={<ReloadOutlined />} onClick={reload}>{t('mcp_conn_btn_refresh')}</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>{t('mcp_conn_btn_add')}</Button>
         </Space>
@@ -328,7 +370,20 @@ const McpExternalConnections: React.FC = () => {
         loading={loading}
         dataSource={items}
         columns={columns}
-        scroll={{ x: 1330 }}
+        rowSelection={{
+          // 选择列常驻占位(48px),避免进出导出模式时表格列挪动;
+          // 非导出模式只是不渲染复选框
+          selectedRowKeys: selectedKeys,
+          columnWidth: 48,
+          fixed: true,
+          hideSelectAll: !exportMode,
+          renderCell: exportMode ? undefined : () => null,
+          onChange: (keys, rows) => {
+            setSelectedKeys(keys)
+            setSelectedCodes(rows.map((r) => r.code))
+          },
+        }}
+        scroll={{ x: 1378 }}
         locale={{ emptyText: <Empty description={t('mcp_conn_empty')} /> }}
         pagination={{ pageSize: 20, showTotal: (n) => t('mcp_conn_pagination_total', { count: n }) }}
       />
@@ -349,7 +404,22 @@ const McpExternalConnections: React.FC = () => {
       >
         <Form form={form} layout="vertical">
           <Form.Item name="code" label={t('mcp_conn_field_code')}
-                     rules={[{ required: true, message: t('mcp_conn_rule_code_required') }]}>
+                     validateFirst
+                     validateTrigger={['onChange', 'onBlur']}
+                     rules={[
+                       { required: true, message: t('mcp_conn_rule_code_required') },
+                       {
+                         // 输入后立即查库做唯一性校验,重复当场标红提醒
+                         validateTrigger: 'onBlur',
+                         validator: async (_, value) => {
+                           if (!value || editing) return
+                           const taken = await fetchExistingCodes('/mcp-external-connections', [value])
+                           if (taken.includes(value)) {
+                             throw new Error(t('mcp_transfer_code_taken'))
+                           }
+                         },
+                       },
+                     ]}>
             <Input placeholder={t('mcp_conn_ph_code')} disabled={!!editing} />
           </Form.Item>
           <Form.Item name="name" label={t('mcp_conn_field_name')}

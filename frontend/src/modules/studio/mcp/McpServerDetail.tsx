@@ -243,12 +243,14 @@ const ConnectionTab: React.FC<{
         <Descriptions.Item label={t('mcp_detail_conn_field_runtime')}>
           {runtimeKeys.length === 0 ? (
             <Text type="secondary">-</Text>
+          ) : runtimeKeys.filter((k) => !isIllegalEnvKey(k)).length === 0 ? (
+            <Text type="secondary">{t('mcp_detail_conn_runtime_no_legal')}</Text>
           ) : (
-            <Text type="secondary" style={{ fontSize: 12 }}>
-              {t('mcp_detail_conn_runtime_keys', {
-                keys: runtimeKeys.filter((k) => !isIllegalEnvKey(k)).join('、') || t('mcp_detail_conn_runtime_no_legal'),
-              })}
-            </Text>
+            <Space size={4} wrap>
+              {runtimeKeys.filter((k) => !isIllegalEnvKey(k)).map((k) => (
+                <Tag key={k}>{k}</Tag>
+              ))}
+            </Space>
           )}
         </Descriptions.Item>
         <Descriptions.Item label={t('mcp_detail_conn_field_last_result')}>

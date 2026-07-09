@@ -95,6 +95,10 @@ export interface MCPServerDetail {
     env_config_configured: boolean
     env_config_display: string
     env_config_keys: string[]
+    // key → masked value preview (first4********last4 / full mask); binding
+    // keys excluded. Prefilled into the env textarea; masked values are
+    // kept-as-stored on save (backend mask-keep merge).
+    env_config_preview?: Record<string, string>
     // External-connection bindings: codes stored inside the (encrypted)
     // env_config. Not secrets — surfaced separately so the edit drawer
     // can pre-select the two dropdowns without exposing the full plaintext.
@@ -333,7 +337,14 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
         work_dir: detail.work_dir,
         timeout_seconds: detail.timeout_seconds,
         retry_count: detail.retry_count,
-        env_config: '',
+        // Prefill with the masked per-key preview so the admin can SEE what
+        // is configured (keys + first4****last4 values) without plaintext
+        // exposure. Values left masked on save keep their stored value
+        // (backend mask-keep merge); edit a value to actually change it.
+        env_config: (() => {
+          const p = (detail.secrets as any)?.env_config_preview || {}
+          return Object.keys(p).length ? JSON.stringify(p, null, 2) : ''
+        })(),
         // Pre-select the bound external connections (backend surfaces both
         // codes separately so the dropdowns can echo without exposing the
         // env_config plaintext).
@@ -542,10 +553,25 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
               <Form.Item
                 label={t('mcp_server_drawer_field_code')}
                 name="code"
+                validateFirst
                 rules={[
                   { required: true, message: t('mcp_server_drawer_rule_code_required') },
                   { pattern: /^[a-z0-9][a-z0-9_-]*$/, message: t('mcp_server_drawer_rule_code_pattern') },
+                  {
+                    // 输入后立即查库做唯一性校验,重复当场标红提醒
+                    validateTrigger: 'onBlur',
+                    validator: async (_, value) => {
+                      if (!value || mode === 'edit') return
+                      const res = await api.get<{ existing: string[] }>(
+                        '/mcp-servers/check-code', { params: { codes: value } },
+                      )
+                      if ((res.existing || []).includes(value)) {
+                        throw new Error(t('mcp_transfer_code_taken'))
+                      }
+                    },
+                  },
                 ]}
+                validateTrigger={['onChange', 'onBlur']}
                 tooltip={t('mcp_server_drawer_tooltip_code')}
               >
                 <Input maxLength={100} disabled={mode === 'edit'} />
