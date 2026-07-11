@@ -31,6 +31,7 @@ import SkillList from './modules/studio/skills/SkillList'
 import PluginList from './modules/studio/plugins/PluginList'
 import ConnectorPage from './modules/studio/connectors/ConnectorPage'
 import DocumentCenterPage from './modules/studio/docs/DocumentCenterPage'
+import AgentSoul from './modules/admin/system/AgentSoul'
 
 // ── Login redirect ────────────────────────────────────────────────────────────
 const RUNTIME_URL =
@@ -83,6 +84,7 @@ export default function App() {
             <Route path="plugins" element={<PluginList />} />
             <Route path="connectors" element={<ConnectorPage />} />
             <Route path="docs" element={<DocumentCenterPage />} />
+            <Route path="system/soul" element={<AgentSoul />} />
           </Route>
 
           {/* Catch-all */}

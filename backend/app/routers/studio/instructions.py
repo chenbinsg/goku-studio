@@ -217,7 +217,8 @@ def import_soul_md(
         raise HTTPException(400, "SOUL.md content is empty")
 
     try:
-        summary = _import_soul_content(soul_content)
+        from app.agent.instructions import import_soul_content
+        summary = import_soul_content(soul_content)
     except Exception as exc:
         raise HTTPException(500, f"Failed to import SOUL.md: {exc}")
 

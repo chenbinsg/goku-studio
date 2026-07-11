@@ -12,7 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -992,75 +992,25 @@ class OptimizePromptResponse(BaseModel):
     optimized_chars: int
 
 
-def _estimate_tokens(text: str) -> int:
-    """Heuristic token estimator: CJK ÷ 1.7 + non-CJK ÷ 4.5."""
-    cjk_ranges = [
-        (0x4e00, 0x9fff), (0x3040, 0x30ff), (0xac00, 0xd7af),
-        (0x3400, 0x4dbf), (0xff00, 0xffef),
-    ]
-    cjk = sum(
-        1 for ch in text
-        if any(lo <= ord(ch) <= hi for lo, hi in cjk_ranges)
-    )
-    non_cjk = len(text) - cjk
-    return round(cjk / 1.7 + non_cjk / 4.5)
-
-
-_OPTIMIZE_SYSTEM = (
-    "You are an expert prompt engineer. "
-    "Your task is to rewrite a given LLM system prompt so that it is: "
-    "(1) written in concise English, "
-    "(2) semantically complete — every rule, constraint, output format, and behavioral guideline must be preserved, "
-    "(3) as short as possible — eliminate redundancy, verbose explanations, and repeated concepts. "
-    "Output ONLY the rewritten prompt. No commentary, no markdown code fences, no preamble."
-)
-
-_OPTIMIZE_USER_TMPL = (
-    "Rewrite the following system prompt in concise English. "
-    "Preserve ALL rules and output format requirements. Remove only redundancy.\n\n"
-    "--- ORIGINAL PROMPT ---\n{text}\n--- END ---"
-)
-
-
 @router.post("/optimize-prompt", response_model=OptimizePromptResponse)
-def optimize_prompt(
+async def optimize_prompt(
     body: OptimizePromptRequest,
+    request: Request,
     user=Depends(get_current_user),
 ):
     """
     Compress and translate a CJK (or verbose) system prompt into concise English.
-    Uses the configured LLM; returns both original and optimized token estimates.
+    Studio is the management plane and does not own an LLM provider. Forward
+    the request to goku-core, which performs the model call and returns both
+    original and optimized token estimates.
     """
-    from app.services import llm_provider
+    from app.services import core_runtime_proxy
 
-    try:
-        optimized = llm_provider.chat(
-            prompt=_OPTIMIZE_USER_TMPL.format(text=body.text.strip()),
-            system=_OPTIMIZE_SYSTEM,
-            max_tokens=2000,
-            temperature=0.2,
-        )
-    except Exception as exc:
-        # Surface a clean, user-readable reason (strip verbose traceback noise)
-        reason = str(exc)
-        if "Connection refused" in reason or "connect" in reason.lower():
-            reason = "LLM service is unreachable (connection refused)"
-        elif "timeout" in reason.lower():
-            reason = "LLM service timed out"
-        elif "401" in reason or "403" in reason or "authentication" in reason.lower():
-            reason = "LLM service authentication failed"
-        raise HTTPException(status_code=502, detail=f"LLM call failed: {reason}")
-
-    optimized = (optimized or "").strip()
-    if not optimized:
-        raise HTTPException(status_code=502, detail="LLM returned empty response")
-
-    return OptimizePromptResponse(
-        optimized=optimized,
-        original_tokens=_estimate_tokens(body.text),
-        optimized_tokens=_estimate_tokens(optimized),
-        original_chars=len(body.text),
-        optimized_chars=len(optimized),
+    payload = body.model_dump(mode="json") if hasattr(body, "model_dump") else body.dict()
+    return await core_runtime_proxy.post_to_core(
+        request,
+        "/api/v1/agents/optimize-prompt",
+        payload,
     )
 
 

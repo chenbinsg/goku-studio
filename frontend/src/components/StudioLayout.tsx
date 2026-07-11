@@ -78,7 +78,9 @@ export default function StudioLayout() {
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
 
   // Determine which menu item is selected
-  const selectedKey = '/' + location.pathname.split('/')[1]
+  const selectedKey = location.pathname.startsWith('/system/')
+    ? location.pathname
+    : '/' + location.pathname.split('/')[1]
 
   const handleLogout = async () => {
     logout()
@@ -169,6 +171,12 @@ export default function StudioLayout() {
       icon: <SettingOutlined />,
       label: t('layout_section_admin'),
       children: [
+        hasPermission('system.config.write') && {
+          key: '/system/soul',
+          icon: <FileTextOutlined />,
+          label: t('layout_agent_identity_label'),
+          onClick: () => navigate('/system/soul'),
+        },
         hasPermission('system.config.write') && {
           key: 'rt:/system/config',
           icon: <SettingOutlined />,

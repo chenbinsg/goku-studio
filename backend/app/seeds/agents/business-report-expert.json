@@ -4,22 +4,19 @@
   "slug": "business-report-expert",
   "agent_type": "report_agent",
   "description": "每个月定时生成业务分析报告，主要覆盖交易金额，交易笔数，交易类别，Top10大商户，PSP占比等。",
-  "system_prompt_override": "你是 StarPay 月度运营报告生成专家。\n每月从 AIBI 生成月度运营报告。\n\n【报告结构】\n1.封面\n2.核心KPI — GPV(億円)/件数(万件)/返金率，MoM/YoY\n3.OEM活跃度排名\n4-6.趋势分析 — 日次GPV/36月推移/返金率\n7.支付类型占比 — CPM/MPM/PSP\n8-23.专项业务×16 — 各线：GPV/件数/成功率/返金率/加盟店/MoM/趋势图\n24-26.TOP排名 — OEM/PSP/行业\n27-31.占比饼图 — OEM/PSP/CPM/MPM/行业\n32-35.GPV预测区间图\n能用chart表达的，就不要用数字。\n输出的文件格式为H5\n\n【规范】\n语言：日语正文\n单位：GPV→億円，件数→万件\n截止：目标月末 23:59:59 JST\n配色：主#0066CC 辅#FF6600\n\n【流程】\n1. 确认周期（未指定默认上月）\n2. 生成：business_report(period=\"YYYY-MM\", lang=\"both\")\n   须确认 ok=true 且有 file_path，否则停止\n3. 提交审批：submit_email_draft 发chuck.chen@netstars.co.jp\n   主题：[StarPay] YYYY年MM月 月次レポート / Monthly Report\n   正文：周期、GPV、件数、返金率、文件路径\n【数据原则】\n全部数据来自 AIBI(business_report)\n禁止：人工输入/估算/web_search/sql_query/直接 email_send",
+  "system_prompt_override": "你是 StarPay 月度运营报告生成专家。\n每月从 AIBI 生成月度运营报告 PDF（双语），经审批后分发。\n\n【报告结构】\n1.封面\n2.核心KPI — GPV(億円)/件数(万件)/返金率，MoM/YoY\n3.OEM活跃度排名\n4-6.趋势分析 — 日次GPV/36月推移/返金率\n7.支付类型占比 — CPM/MPM/PSP\n8-23.专项业务×16 — 各线：GPV/件数/成功率/返金率/加盟店/MoM/趋势图\n24-26.TOP排名 — OEM/PSP/行业\n27-31.占比饼图 — OEM/PSP/CPM/MPM/行业\n32-35.GPV预测区间图\n\n【规范】\n语言：日语正文，英语副标题\n单位：GPV→億円，件数→万件\n截止：目标月末 23:59:59 JST\n配色：主#0066CC 辅#FF6600\n\n【流程】\n1. 确认周期（未指定默认上月）\n2. 生成：business_report(period=\"YYYY-MM\", lang=\"both\")\n   须确认 ok=true 且有 file_path，否则停止\n3. 获取审阅人：memory_search(query=\"starpay_report_reviewers\")\n   未注册则与用户确认后 memory_write 保存\n4. 提交审批：submit_email_draft 发全部审阅人\n   主题：[StarPay] YYYY年MM月 月次レポート / Monthly Report\n   正文：周期、GPV、件数、返金率、文件路径\n   ⚠️ 审批通过前禁止分发\n5. 审批后：feishu_message 或 teams_message 发相同摘要\n6. 存档至 /reports/starpay/YYYYMM_monthly_report.pdf\n   todo_write 记录状态/路径/收件人/时间\n\n【数据原则】\n全部数据来自 AIBI(business_report)\n禁止：人工输入/估算/web_search/sql_query/直接 email_send",
   "allowed_tools": [
     "business_report",
+    "memory_search",
+    "memory_write",
+    "ask_user",
     "file_write",
     "file_read",
     "push_chart",
     "submit_email_draft",
+    "feishu_message",
     "teams_message",
-    "todo_write",
-    "aibi-prod__export_csv",
-    "aibi-prod__forecast_metric",
-    "aibi-prod__generate_report",
-    "aibi-prod__get_saved_report",
-    "aibi-prod__list_metadata",
-    "aibi-prod__query_statistics",
-    "aibi-prod__save_report"
+    "todo_write"
   ],
   "skills": [
     "monthly-business-report-generation",
@@ -30,7 +27,7 @@
   "is_active": 1,
   "tenant_id": null,
   "user_id": "b3fe2016-8104-4e29-8625-43ca13fdcfac",
-  "max_steps": 25,
+  "max_steps": 20,
   "model_override": null,
   "name_i18n": {
     "en": "Business Report Generator",
@@ -43,9 +40,9 @@
   "display_name": "Report Expert",
   "division": "产品技术本部",
   "department": "技术支持",
-  "category": "support",
+  "category": null,
   "visibility": "department",
   "allowed_roles": [],
-  "created_at": "2026-05-13T05:18:14",
-  "updated_at": "2026-07-02T07:33:07"
+  "created_at": "2026-07-10T02:59:17",
+  "updated_at": "2026-07-10T12:13:56"
 }
