@@ -299,6 +299,7 @@ interface MCPCapability {
   description?: string
   input_schema?: any
   output_schema?: any
+  input_params?: string[]
   status: 'active' | 'inactive'
   authorization_mode?: 'required' | 'public'
   quota_enabled?: boolean
@@ -415,11 +416,12 @@ const CapabilitiesTab: React.FC<{
         </div>
       ) },
     { title: t('mcp_detail_cap_col_status'), dataIndex: 'status', key: 'status', width: 80, render: capabilityStatusTag },
-    // schema 多数行只是 `-`,真有内容也是 truncated 一行,150px 够。
-    { title: t('mcp_detail_cap_col_input_schema'), dataIndex: 'input_schema', key: 'input_schema', width: 150, ellipsis: true,
-      render: (v: any) => <Text code style={{ whiteSpace: 'nowrap' }}>{jsonPreview(v)}</Text> },
-    { title: t('mcp_detail_cap_col_output_schema'), dataIndex: 'output_schema', key: 'output_schema', width: 150, ellipsis: true,
-      render: (v: any) => <Text code style={{ whiteSpace: 'nowrap' }}>{jsonPreview(v)}</Text> },
+    // 入参列显示参数名摘要(带 * 的为必填);完整 JSON Schema 在「管理」抽屉里。
+    // 出参列已移除:MCP 协议的工具发现基本不提供 outputSchema,该列永远为空。
+    { title: t('mcp_detail_cap_col_input_schema'), dataIndex: 'input_params', key: 'input_params', width: 200,
+      render: (v?: string[]) => (v && v.length > 0)
+        ? <Space size={4} wrap>{v.map((p) => <Tag key={p} style={{ marginRight: 0 }}>{p}</Tag>)}</Space>
+        : <Text type="secondary">-</Text> },
     {
       title: t('mcp_detail_cap_col_auth_mode'), dataIndex: 'authorization_mode', key: 'auth_mode', width: 100,
       render: (v?: string) => (v || 'required') === 'public'
@@ -685,6 +687,40 @@ const CapabilityManageDrawer: React.FC<{
   const [authz, setAuthz] = useState<AuthorizationItem[]>([])
   const [capSummary, setCapSummary] = useState<CapSummary | null>(null)
   const [loading, setLoading] = useState(false)
+  // 参数补丁(schema overrides):三层展示 + 编辑
+  const [capDetail, setCapDetail] = useState<MCPCapability | null>(null)
+  const [ovrText, setOvrText] = useState('')
+  const [ovrSaving, setOvrSaving] = useState(false)
+
+  const loadCapDetail = useCallback(async () => {
+    if (!capId) return
+    try {
+      const d = await api.get<MCPCapability & { schema_overrides?: any; effective_input_schema?: any }>(
+        `/mcp-servers/${serverId}/capabilities/${capId}`)
+      setCapDetail(d)
+      const params = (d as any).schema_overrides?.params || {}
+      const editable: Record<string, any> = {}
+      Object.entries(params).forEach(([k, v]: [string, any]) => {
+        editable[k] = { ...(v.description ? { description: v.description } : {}), ...(v.type ? { type: v.type } : {}) }
+      })
+      setOvrText(Object.keys(editable).length ? JSON.stringify(editable, null, 2) : '')
+    } catch { setCapDetail(null) }
+  }, [serverId, capId])
+
+  const saveOverrides = async () => {
+    let params: any = {}
+    if (ovrText.trim()) {
+      try { params = JSON.parse(ovrText) } catch { message.error(t('mcp_ovr_invalid_json')); return }
+    }
+    setOvrSaving(true)
+    try {
+      await api.put(`/mcp-servers/${serverId}/capabilities/${capId}/schema-overrides`, { params })
+      message.success(t('mcp_ovr_saved'))
+      await loadCapDetail()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail?.message || e?.response?.data?.detail || String(e))
+    } finally { setOvrSaving(false) }
+  }
 
   // authz create / edit modal
   const [formOpen, setFormOpen] = useState(false)
@@ -703,6 +739,8 @@ const CapabilityManageDrawer: React.FC<{
     setAiTools((toolRes.tools || []).filter(t => !!t.id).map(t => ({ id: t.id as string, name: t.name })))
     setAgents((agentRes.items || []).map(a => ({ id: a.id, name: a.name })))
   }, [])
+
+  React.useEffect(() => { if (open) loadCapDetail() }, [open, loadCapDetail])
 
   const reload = useCallback(async () => {
     if (!capId) return
@@ -950,11 +988,37 @@ const CapabilityManageDrawer: React.FC<{
           <Descriptions.Item label={t('mcp_detail_mgr_detail_status')}>{capabilityStatusTag(capability.status)}</Descriptions.Item>
           <Descriptions.Item label={t('mcp_detail_mgr_detail_input_schema')}>
             <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
-              {JSON.stringify(capability.input_schema, null, 2)}</pre>
+              {JSON.stringify((capDetail as any)?.input_schema ?? capability.input_schema ?? null, null, 2)}</pre>
           </Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_output_schema')}>
+          <Descriptions.Item label={t('mcp_ovr_effective_schema')}>
             <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
-              {JSON.stringify(capability.output_schema, null, 2)}</pre>
+              {JSON.stringify((capDetail as any)?.effective_input_schema ?? capability.input_schema, null, 2)}</pre>
+          </Descriptions.Item>
+          <Descriptions.Item label={t('mcp_ovr_editor_label')}>
+            <div>
+              <Space wrap style={{ marginBottom: 6 }}>
+                {Object.entries(((capDetail as any)?.schema_overrides?.params) || {}).map(([k, v]: [string, any]) => (
+                  <Tag key={k} color={v.status === 'active' ? 'green' : 'orange'}>
+                    {k}: {v.status === 'active' ? t('mcp_ovr_status_active')
+                      : v.status === 'stale_param_missing' ? t('mcp_ovr_status_param_missing')
+                      : t('mcp_ovr_status_upstream_changed')}
+                  </Tag>
+                ))}
+              </Space>
+              <Input.TextArea
+                rows={5}
+                value={ovrText}
+                onChange={(e) => setOvrText(e.target.value)}
+                placeholder={t('mcp_ovr_placeholder')}
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+              <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_ovr_hint')}</Text>
+                <Button size="small" type="primary" loading={ovrSaving} onClick={saveOverrides}>
+                  {t('mcp_ovr_save')}
+                </Button>
+              </div>
+            </div>
           </Descriptions.Item>
           <Descriptions.Item label={t('mcp_detail_mgr_detail_last_synced')}>{fmt(capability.last_synced_at)}</Descriptions.Item>
           <Descriptions.Item label={t('mcp_detail_mgr_detail_last_called')}>{fmt(capability.last_called_at)}</Descriptions.Item>
@@ -1081,7 +1145,7 @@ const CapabilityManageDrawer: React.FC<{
       destroyOnClose
     >
       <Spin spinning={loading}>
-        <Collapse defaultActiveKey={['mode', 'quota', 'authz']} items={collapseItems} />
+        <Collapse defaultActiveKey={['detail', 'mode', 'quota', 'authz']} items={collapseItems} />
       </Spin>
 
       {/* 授权调用方 新增 / 编辑 */}

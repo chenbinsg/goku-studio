@@ -98,12 +98,27 @@ def _get_capability_or_404(
     return cap
 
 
+def _input_param_summary(input_schema) -> list[str]:
+    """Compact param-name summary for the capability LIST page, derived
+    from the MCP inputSchema (required params carry a ``*`` suffix). The
+    full JSON Schema stays detail-only — the list row just answers
+    "what does this tool take?" at a glance."""
+    if not isinstance(input_schema, dict):
+        return []
+    props = input_schema.get("properties")
+    if not isinstance(props, dict):
+        return []
+    required = set(input_schema.get("required") or [])
+    return [f"{name}*" if name in required else name for name in props.keys()]
+
+
 def _capability_to_list_item(c: MCPCapability) -> MCPCapabilityListItem:
     return MCPCapabilityListItem(
         id=c.id,
         server_id=c.server_id,
         capability_name=c.capability_name,
         description=c.description,
+        input_params=_input_param_summary(c.input_schema),
         status=c.status,
         authorization_mode=c.authorization_mode or "required",
         quota_enabled=bool(c.quota_enabled),
@@ -123,13 +138,47 @@ def _capability_to_detail(c: MCPCapability, db: Session) -> MCPCapabilityDetail:
     ``remaining``.
     """
     from app.services import mcp_authorizations as _authz
+    from app.services.mcp_schema_overrides import effective_input_schema
     base = _capability_to_list_item(c).model_dump()
     return MCPCapabilityDetail(
         **base,
         input_schema=c.input_schema,
         output_schema=c.output_schema,
+        schema_overrides=c.schema_overrides,
+        effective_input_schema=effective_input_schema(c.input_schema, c.schema_overrides),
         quota=_authz._quota_view(db, c),
     )
+
+
+def set_schema_overrides(
+    db: Session,
+    server_id: str,
+    capability_id: str,
+    params_input: dict,
+    *,
+    user_id=None,
+) -> MCPCapabilityDetail:
+    """Replace a capability's schema patch layer from admin input.
+
+    Fingerprints are stamped from the CURRENT raw schema, so a freshly
+    saved patch is always ``active``; later upstream changes quarantine
+    it via the sync-time revalidation. ``params_input == {}`` clears all
+    patches. Raises 400 on unknown param names.
+    """
+    from fastapi import HTTPException
+    from sqlalchemy.orm.attributes import flag_modified
+    from app.services.mcp_schema_overrides import build_overrides
+
+    cap = _get_capability_or_404(db, server_id, capability_id)
+    try:
+        overrides = build_overrides(cap.input_schema, params_input)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    cap.schema_overrides = overrides or None
+    flag_modified(cap, "schema_overrides")
+    db.commit()
+    db.refresh(cap)
+    return _capability_to_detail(cap, db)
 
 
 # ─── Capabilities: list / detail ───────────────────────────────────────

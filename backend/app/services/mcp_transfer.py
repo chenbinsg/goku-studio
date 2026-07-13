@@ -341,8 +341,11 @@ def import_connections(
     an item whose ``code`` already exists is skipped and reported —
     import never modifies existing configuration.
 
-    Placeholder secret values are dropped before they reach the service
-    layer, so the key simply stays unconfigured on the new connection.
+    Secret handling: a real value supplied at import time (the user typed it
+    into the import dialog) is encrypted and stored. A secret key left blank
+    or still carrying the export placeholder is kept as a LABEL — the key is
+    stored with an empty value so the admin sees "this field still needs a
+    value" on the connection later, instead of the field silently vanishing.
     """
     if bundle.get("kind") != BUNDLE_KIND_CONNECTIONS:
         raise HTTPException(
@@ -365,21 +368,39 @@ def import_connections(
             secret_in = item.get("secret") or {}
             if not isinstance(secret_in, dict):
                 secret_in = {}
-            secret_clean = {
-                k: v for k, v in secret_in.items() if not _is_placeholder(v)
+            # Split: real values → encrypt & store now; blank/placeholder →
+            # keep the key as an empty label (see docstring).
+            filled = {
+                k: v for k, v in secret_in.items()
+                if isinstance(v, str) and v.strip() and not _is_placeholder(v)
             }
+            label_only = [k for k in secret_in.keys() if k not in filled]
+
             payload = MCPExternalConnectionCreate(
                 code=code,
                 name=item.get("name") or code,
                 connection_type=item.get("connection_type"),
                 enabled=bool(item.get("enabled", True)),
                 config=item.get("config") or {},
-                secret=secret_clean,
+                secret=filled,
                 allowed_scopes=item.get("allowed_scopes") or {},
             )
             conn_svc.create_connection(
                 db, payload, user_id=user_id, request=request,
             )
+            # Persist label-only keys directly (create_connection's encrypt
+            # helper drops empty values, which would lose the labels). It
+            # returns a serialized dict, so re-fetch the ORM row to edit it.
+            if label_only:
+                row = _get_active_connection_by_code(db, code)
+                if row is not None:
+                    _sj = dict(row.secret_json or {})
+                    for k in label_only:
+                        _sj.setdefault(k, "")
+                    row.secret_json = _sj
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(row, "secret_json")
+                    db.commit()
             created.append(code)
         except (HTTPException, ValidationError, ValueError) as exc:
             db.rollback()

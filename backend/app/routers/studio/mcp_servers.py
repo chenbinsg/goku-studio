@@ -40,6 +40,7 @@ from app.schemas import (
     MCPCapabilityBlacklistItem,
     MCPCapabilityBlacklistListResponse,
     MCPCapabilityQuotaConfig,
+    MCPCapabilitySchemaOverridesUpdate,
     MCPCapabilityQuotaUpdate,
     MCPChangeLogListResponse,
     MCPConnectionTestResult,
@@ -343,6 +344,32 @@ def preview_mcp_server_capabilities_usage(
     call before deleting the server or disabling capabilities."""
     server = caps._get_server_or_404(db, server_id)
     return caps.capability_usage(db, server)
+
+
+@router.put(
+    "/{server_id}/capabilities/{capability_id}/schema-overrides",
+    response_model=MCPCapabilityDetail,
+)
+def update_capability_schema_overrides(
+    server_id: str,
+    capability_id: str,
+    payload: MCPCapabilitySchemaOverridesUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPCapabilityDetail:
+    """Replace the admin schema patch layer for one capability (holes-only
+    merge + fingerprint quarantine — see services/mcp_schema_overrides.py).
+    Triggers a runtime refresh so the effective schema reaches the LLM
+    without a restart."""
+    detail = caps.set_schema_overrides(
+        db, server_id, capability_id, payload.params, user_id=current_user.id,
+    )
+    from app.services import mcp_servers as _srv_svc
+    _server = db.query(models.MCPServer).filter(models.MCPServer.id == server_id).first()
+    if _server is not None:
+        _srv_svc._trigger_runtime_refresh(_server.code, request)
+    return detail
 
 
 @router.post("/{server_id}/capabilities/{capability_id}/disable")

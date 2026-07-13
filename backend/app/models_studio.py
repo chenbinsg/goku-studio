@@ -282,6 +282,9 @@ class MCPCapability(Base):
     description        = Column(Text,        nullable=True)
     input_schema       = Column(JSON,        nullable=True)
     output_schema      = Column(JSON,        nullable=True)
+    # Admin-curated schema patch layer (holes-only merge + fingerprint
+    # quarantine — see services/mcp_schema_overrides.py)
+    schema_overrides   = Column(JSON,        nullable=True)
     status             = Column(String(20),  default="active", server_default="active", nullable=False)
     quota_enabled      = Column(Boolean,     default=False, server_default="0", nullable=False)
     quota_limit        = Column(Integer,     nullable=True)

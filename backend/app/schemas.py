@@ -968,6 +968,9 @@ class MCPCapabilityListItem(BaseModel):
     server_id: str
     capability_name: str
     description: str | None = None
+    # Param-name summary derived from the MCP inputSchema (required params
+    # carry a ``*``). The full JSON Schema is detail-only.
+    input_params: list[str] = Field(default_factory=list)
     status: str
     authorization_mode: str = "required"
     # Total + rate quota — surfaced on the 能力 list so the quota editor
@@ -1178,7 +1181,22 @@ class MCPCapabilityDetail(MCPCapabilityListItem):
 
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
+    # Admin patch layer + the merged schema the LLM actually sees
+    # (see services/mcp_schema_overrides.py for the three safety rules).
+    schema_overrides: dict[str, Any] | None = None
+    effective_input_schema: dict[str, Any] | None = None
     quota: MCPCapabilityQuotaConfig
+
+
+class MCPCapabilitySchemaOverridesUpdate(BaseModel):
+    """Body for ``PUT …/capabilities/{id}/schema-overrides``.
+
+    ``params`` maps param name → supplement fields (``description`` /
+    ``type`` only). The server stamps fingerprints from the CURRENT raw
+    schema and stores status=active; pass ``{}`` to clear all patches.
+    """
+
+    params: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 # ── MCP Capability ↔ Principal authorizations ──────────────────────────

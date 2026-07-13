@@ -973,6 +973,14 @@ async def _sync_capabilities(
         elif (row.description or "") != desc or (row.input_schema or {}) != schema:
             row.description = desc
             row.input_schema = schema
+            # Upstream contract changed — revalidate patch fingerprints so a
+            # stale annotation is quarantined instead of misleading the model.
+            from app.services.mcp_schema_overrides import revalidate_overrides
+            _ovr, _changed = revalidate_overrides(schema, row.schema_overrides)
+            if _changed:
+                row.schema_overrides = _ovr
+                from sqlalchemy.orm.attributes import flag_modified
+                flag_modified(row, "schema_overrides")
             row.last_synced_at = now
             row.updated_at = now
             updated += 1

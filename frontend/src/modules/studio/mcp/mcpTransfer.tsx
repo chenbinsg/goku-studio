@@ -27,6 +27,15 @@ export interface TransferImportResult {
 /** 与后端 schema 的 code 校验一致(MCPServerCreate._validate_code)。 */
 export const CODE_PATTERN = /^[a-z0-9][a-z0-9_-]*$/
 
+/** 导出时敏感值被抹成的占位说明文字(与后端 SECRET_PLACEHOLDER 对应)。
+ *  用来判断导入文件里的 secret 值是"真密钥"还是"待填占位"。 */
+function isSecretPlaceholder(v: unknown): boolean {
+  if (typeof v !== 'string') return true          // 非字符串/缺失 → 视为待填
+  const s = v.trim()
+  if (!s) return true                             // 空 → 待填
+  return s.includes('敏感信息不随导出文件提供') || s.includes('********')
+}
+
 /** 查库:codes 里哪些已被占用。新建抽屉的实时校验也用它。 */
 export async function fetchExistingCodes(path: string, codes: string[]): Promise<string[]> {
   if (!codes.length) return []
@@ -112,6 +121,17 @@ interface ConnOption {
   connection_type: string
 }
 
+/** 外部连接导入时,一条连接的鉴权(secret)填写。导出时 secret 的值被抹成
+ *  占位符;导入时给一个 JSON 文本框,预填整个 secret 结构,用户直接改——
+ *  把占位符换成真密钥即建好;保留占位符/留空 = 该字段只当 label 稍后再填。
+ *  用文本框而非逐字段输入,是因为 secret 结构不固定(可能多字段/嵌套),
+ *  程序无法可靠拆成一个个输入框。 */
+interface SecretFill {
+  connCode: string   // 文件里该连接的 code
+  json: string       // 该连接 secret 的 JSON 文本(预填导出结构,用户编辑)
+  error: string      // JSON 解析错误提示,空 = 无错
+}
+
 /** 「导入」按钮 + 冲突确认弹窗。path 形如 '/mcp-servers'。 */
 export function McpImportButton({ path, onDone }: { path: string; onDone: () => void }) {
   const { t } = useTranslation()
@@ -119,6 +139,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
   const [decisions, setDecisions] = useState<ConflictDecision[]>([])
   const [connFixes, setConnFixes] = useState<ConnFix[]>([])
   const [connOptions, setConnOptions] = useState<ConnOption[]>([])
+  const [secretFills, setSecretFills] = useState<SecretFill[]>([])
   const [importing, setImporting] = useState(false)
 
   const refreshConnOptions = async () => {
@@ -190,6 +211,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
         .filter(Boolean)
       let existing: string[] = []
       const fixes: ConnFix[] = []
+      const fills: SecretFill[] = []
       try {
         existing = await fetchExistingCodes(path, codes)
         // 服务器导入:导出文件里连接绑定值已被清空(键仍在),说明这些
@@ -208,19 +230,36 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
             await refreshConnOptions()
           }
         }
+        // 外部连接导入:凡有 secret 且其中有占位符字段的连接,给一个 JSON
+        // 文本框让用户填鉴权(整块编辑,应对不固定/嵌套结构)。secret 里
+        // 全是真值的连接不打扰,直接建好。
+        if (path === '/mcp-external-connections') {
+          for (const it of parsed?.items || []) {
+            const secret = it?.secret
+            if (!secret || typeof secret !== 'object') continue
+            const hasPlaceholder = Object.values(secret).some(isSecretPlaceholder)
+            if (!hasPlaceholder) continue  // 全真值 → 不用填
+            fills.push({
+              connCode: String(it?.code || '').trim(),
+              json: JSON.stringify(secret, null, 2),
+              error: '',
+            })
+          }
+        }
       } catch (e: any) {
         message.error(e?.response?.data?.detail?.message || e?.response?.data?.detail || e?.message || String(e))
         return
       }
-      if (existing.length === 0 && fixes.length === 0) {
+      if (existing.length === 0 && fixes.length === 0 && fills.length === 0) {
         await doImport(parsed)
         return
       }
-      // 有编码冲突或缺失的连接绑定 → 弹窗逐条确认
+      // 有编码冲突 / 缺连接绑定 / 待填鉴权 → 弹窗逐条确认
       setDecisions(existing.map((code) => ({
         original: code, action: 'skip', newCode: '', error: '',
       })))
       setConnFixes(fixes)
+      setSecretFills(fills)
       setBundle(parsed)
     }
     input.click()
@@ -287,6 +326,29 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
       if (!fixesByItem.has(f.itemCode)) fixesByItem.set(f.itemCode, [])
       fixesByItem.get(f.itemCode)!.push(f)
     }
+    // 校验并解析每条连接的 secret JSON。被跳过的连接(冲突选了跳过)不导入,
+    // 其鉴权框内容一律忽略,不参与校验、不阻塞。
+    const skippedCodes = new Set(
+      decisions.filter((d) => d.action === 'skip').map((d) => d.original),
+    )
+    const parsedSecret = new Map<string, Record<string, unknown>>()
+    let secretErr = false
+    setSecretFills((prev) => prev.map((f) => {
+      if (skippedCodes.has(f.connCode)) return { ...f, error: '' }
+      try {
+        const obj = JSON.parse(f.json || '{}')
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+          parsedSecret.set(f.connCode, obj)
+          return { ...f, error: '' }
+        }
+        secretErr = true
+        return { ...f, error: t('mcp_transfer_secret_not_object') }
+      } catch {
+        secretErr = true
+        return { ...f, error: t('mcp_transfer_import_invalid_json') }
+      }
+    }))
+    if (secretErr) return
     const items = (bundle?.items || []).flatMap((it: any) => {
       const origCode = String(it?.code || '').trim()
       const d = decisionByCode.get(origCode)
@@ -299,6 +361,11 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
         const env = { ...(out.env_config || {}) }
         for (const f of fixes) env[f.field] = f.chosen || ''
         out = { ...out, env_config: env }
+      }
+      // 外部连接:用用户编辑后的 secret JSON 整体替换。后端按值分流——
+      // 真值加密存,占位符/空值保留 key 当待填 label。
+      if (parsedSecret.has(origCode)) {
+        out = { ...out, secret: parsedSecret.get(origCode) }
       }
       return [out]
     })
@@ -316,12 +383,92 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
     setBundle(null)
     setDecisions([])
     setConnFixes([])
+    setSecretFills([])
+  }
+
+  const setSecretJson = (idx: number, json: string) => {
+    setSecretFills((prev) => prev.map((f, i) => (i === idx ? { ...f, json, error: '' } : f)))
   }
 
   // 连接不选 = 留空稍后配,不阻塞确认;仅编码冲突未解决时禁用
   const hasBlockingError = decisions.some(
     (d) => d.action === 'rename' && (d.error !== '' || !d.newCode.trim()),
   )
+
+  /** 外部连接导入弹窗:按连接聚合渲染。每条连接一块,内容由其状态决定:
+   *  - 冲突 → 跳过/改名单选;选改名再显示 code 框 +(如需要)鉴权 JSON 框;
+   *          选跳过则该块下方不显示任何输入项。
+   *  - 不冲突但需填鉴权 → 只显示鉴权 JSON 框(没有跳过/改名)。 */
+  const renderConnBlocks = () => {
+    // 有序去重:先冲突项、再纯待填项,按出现顺序
+    const order: string[] = []
+    const seen = new Set<string>()
+    for (const d of decisions) if (!seen.has(d.original)) { order.push(d.original); seen.add(d.original) }
+    for (const f of secretFills) if (!seen.has(f.connCode)) { order.push(f.connCode); seen.add(f.connCode) }
+
+    return order.map((code) => {
+      const dIdx = decisions.findIndex((d) => d.original === code)
+      const d = dIdx >= 0 ? decisions[dIdx] : null
+      const sIdx = secretFills.findIndex((f) => f.connCode === code)
+      const s = sIdx >= 0 ? secretFills[sIdx] : null
+      const skipped = d?.action === 'skip'
+      // 鉴权框显示条件:有待填 secret,且没被跳过(冲突项须选了改名)
+      const showSecret = !!s && !skipped && (!d || d.action === 'rename')
+      return (
+        <div key={code} style={{ padding: '10px 0', borderBottom: '1px solid #f0f0f0' }}>
+          <Space direction="vertical" style={{ width: '100%' }} size={6}>
+            <Space wrap>
+              <Text code>{code}</Text>
+              {d && (
+                <Radio.Group
+                  size="small"
+                  value={d.action}
+                  onChange={(e) => setDecision(dIdx, { action: e.target.value, error: '' })}
+                  options={[
+                    { label: t('mcp_transfer_conflict_skip'), value: 'skip' },
+                    { label: t('mcp_transfer_conflict_rename'), value: 'rename' },
+                  ]}
+                  optionType="button"
+                />
+              )}
+              {d && <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_transfer_conn_conflict_tag')}</Text>}
+            </Space>
+            {d?.action === 'rename' && (
+              <div>
+                <Input
+                  size="small"
+                  style={{ width: 320 }}
+                  placeholder={t('mcp_transfer_conflict_new_code_placeholder')}
+                  value={d.newCode}
+                  status={d.error ? 'error' : undefined}
+                  onChange={(e) => setDecision(dIdx, { newCode: e.target.value, error: '' })}
+                  onBlur={() => validateNewCode(dIdx)}
+                />
+                {/* 固定高度占位:报错显隐不改变下方布局,避免整窗跳动 */}
+                <div style={{ height: 18, lineHeight: '18px' }}>
+                  {d.error && <Text type="danger" style={{ fontSize: 12 }}>{d.error}</Text>}
+                </div>
+              </div>
+            )}
+            {showSecret && (
+              <div>
+                <Input.TextArea
+                  rows={Math.min(8, (s!.json.match(/\n/g)?.length || 0) + 1)}
+                  value={s!.json}
+                  status={s!.error ? 'error' : undefined}
+                  style={{ fontFamily: 'monospace', fontSize: 12 }}
+                  onChange={(e) => setSecretJson(sIdx, e.target.value)}
+                />
+                <div style={{ height: 18, lineHeight: '18px' }}>
+                  {s!.error && <Text type="danger" style={{ fontSize: 12 }}>{s!.error}</Text>}
+                </div>
+              </div>
+            )}
+          </Space>
+        </div>
+      )
+    })
+  }
 
   return (
     <>
@@ -331,7 +478,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
         </Button>
       </Tooltip>
       <Modal
-        open={bundle !== null && (decisions.length > 0 || connFixes.length > 0)}
+        open={bundle !== null && (decisions.length > 0 || connFixes.length > 0 || secretFills.length > 0)}
         title={t(decisions.length > 0
           ? 'mcp_transfer_conflict_title'
           : 'mcp_transfer_conn_only_title')}
@@ -341,7 +488,14 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
         onOk={onConfirm}
         onCancel={closeModal}
       >
-        {decisions.length > 0 && (
+        {/* 外部连接:按连接聚合——每条一块,冲突处理与其鉴权框在一起,
+            选跳过则不显示任何输入项(见 renderConnBlocks)。 */}
+        {path === '/mcp-external-connections' ? (
+          <>
+            <p><Text type="secondary">{t('mcp_transfer_conn_aggregate_hint')}</Text></p>
+            <div style={{ maxHeight: 380, overflow: 'auto' }}>{renderConnBlocks()}</div>
+          </>
+        ) : decisions.length > 0 && (
           <>
             <p><Text type="secondary">{t('mcp_transfer_conflict_hint')}</Text></p>
             <div style={{ maxHeight: 300, overflow: 'auto' }}>
