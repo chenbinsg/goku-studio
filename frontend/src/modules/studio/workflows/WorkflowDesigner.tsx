@@ -463,10 +463,22 @@ const WorkflowDesignerInner: React.FC = () => {
 
   // Pull the routable model list from Goku-Router (via studio backend proxy) so
   // the node model dropdown reflects the live catalog instead of a hardcoded list.
+  // Fall back to a minimal static list if the proxy is unreachable or returns
+  // empty (e.g. ROUTER_URL misconfigured) so the dropdown is never empty.
   useEffect(() => {
-    modelApi.list().then((res: any) => {
-      setAvailableModels(Array.isArray(res?.models) ? res.models : [])
-    }).catch(() => {})
+    const FALLBACK_MODELS = ['Qwen3.6', 'gpt-4o']
+    modelApi.list()
+      .then((res: any) => {
+        const list = Array.isArray(res?.models) ? res.models : []
+        // Core's /api/v1/models returns dicts ({ name, provider, ... }); older
+        // proxies returned bare strings. Normalise to model names and drop the
+        // "router/auto" routing directive (not a concrete, selectable model).
+        const names = list
+          .map((m: any) => (typeof m === 'string' ? m : (m?.name ?? m?.id ?? '')))
+          .filter((n: string) => n && n !== 'router/auto')
+        setAvailableModels(names.length ? names : FALLBACK_MODELS)
+      })
+      .catch(() => setAvailableModels(FALLBACK_MODELS))
   }, [])
 
   // ── Poll execution status ───────────────────────────────────────────────────
@@ -703,7 +715,6 @@ const WorkflowDesignerInner: React.FC = () => {
             <Form.Item label={t('workflow_designer_model')} name="model">
               <Select
                 showSearch
-                placeholder={availableModels.length ? undefined : 'Goku-Router 无可用模型'}
                 options={availableModels.map((m) => ({ label: m, value: m }))}
               />
             </Form.Item>
