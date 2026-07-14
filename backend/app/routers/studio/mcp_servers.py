@@ -111,10 +111,15 @@ def export_mcp_servers(
     codes: Optional[str] = Query(
         None, description="逗号分隔的 code 列表;省略则导出全部",
     ),
+    with_conn_codes: Optional[str] = Query(
+        None, description="逗号分隔:这些服务器 code 的绑定外部连接一并导出(敏感值仍占位符)",
+    ),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
-) -> JSONResponse:
-    """Download active servers as a JSON bundle — one, a selection
+):
+    """Download active servers — a single-server / all export is one JSON;
+    a multi-server batch is a zip of one self-contained JSON per server.
+    Download active servers as a JSON bundle — one, a selection
     (``?codes=a,b``), or all (no param). Secret values are replaced by
     an explanatory placeholder — the file is safe to share; credentials
     must be re-entered after import.
@@ -122,13 +127,38 @@ def export_mcp_servers(
     Registered BEFORE ``/{server_id}`` so the literal path wins.
     """
     code_list = [c.strip() for c in codes.split(",") if c.strip()] if codes else None
-    bundle = transfer.export_servers(db, codes=code_list)
-    stem = code_list[0] if code_list and len(code_list) == 1 else "servers"
-    filename = f"mcp-{stem}-{datetime.utcnow():%Y%m%d-%H%M%S}.json"
+    wc_list = [c.strip() for c in with_conn_codes.split(",") if c.strip()] if with_conn_codes else None
+    stamp = f"{datetime.utcnow():%Y%m%d-%H%M%S}"
+    # Resolve the concrete servers this export produces (selection, or ALL when
+    # no codes). Format is decided purely by count: 1 → a single JSON;
+    # 2+ (incl. "export all") → a zip of one self-contained JSON per server.
+    resolved = transfer.resolve_export_server_codes(db, code_list)
+    if len(resolved) != 1:
+        data = transfer.export_servers_zip(db, resolved, with_conn_codes=wc_list)
+        from fastapi.responses import Response
+        return Response(
+            content=data,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="mcp-servers-{stamp}.zip"'},
+        )
+    bundle = transfer.export_servers(db, codes=resolved, with_conn_codes=wc_list)
     return JSONResponse(
         content=bundle,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="mcp-{resolved[0]}-{stamp}.json"'},
     )
+
+
+@router.get("/binding-summary")
+def mcp_servers_binding_summary(
+    codes: str = Query(..., description="逗号分隔的 server code 列表"),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+) -> dict:
+    """Per-server bound-connection codes — powers the export dialog's
+    per-server 'include its connections' checkboxes. Registered BEFORE
+    ``/{server_id}``."""
+    code_list = [c.strip() for c in codes.split(",") if c.strip()]
+    return {"servers": transfer.server_binding_summary(db, code_list)}
 
 
 @router.get("/check-code")
@@ -224,6 +254,21 @@ def delete_mcp_server(
     """
     svc.soft_delete_server(db, server_id, user_id=current_user.id, request=request)
     return None
+
+
+@router.post("/{server_id}/acknowledge-binding-lost", response_model=MCPServerDetail)
+def acknowledge_binding_lost(
+    server_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> MCPServerDetail:
+    """Dismiss the "bound external connection was deleted" prompt on this
+    server (clears the env_config marker). Acknowledgement only — does not
+    re-bind anything. Idempotent."""
+    return svc.acknowledge_binding_lost(
+        db, server_id, user_id=current_user.id, request=request
+    )
 
 
 @router.post("/{server_id}/enable", response_model=MCPServerDetail)

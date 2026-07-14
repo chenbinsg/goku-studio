@@ -10,7 +10,7 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import {
   Table, Button, Tag, Space, Typography, Input, Select, Switch, Drawer,
-  Form, message, Card, Empty, Modal, Tooltip, Breadcrumb,
+  Form, message, Card, Empty, Modal, Tooltip, Breadcrumb, Checkbox, Alert,
 } from 'antd'
 import {
   PlusOutlined, ReloadOutlined, ThunderboltOutlined, EditOutlined,
@@ -39,6 +39,14 @@ interface Connection {
   secret?: Record<string, any>
   allowed_scopes?: Record<string, any>
   last_test_error?: string | null
+}
+
+// An MCP server that currently binds a connection (from the /usage probe).
+interface UsingServer {
+  id: string
+  code: string
+  name: string
+  binding_keys: string[]
 }
 
 // Connection-type values; labels come from i18n (mcp_conn_type_<value>).
@@ -114,6 +122,12 @@ const McpExternalConnections: React.FC = () => {
   const [exportMode, setExportMode] = useState(false)
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([])
   const [selectedCodes, setSelectedCodes] = useState<string[]>([])
+  // Delete confirmation: target + the MCP servers currently binding it +
+  // the "I understand this unbinds them" checkbox gate.
+  const [deleteTarget, setDeleteTarget] = useState<Connection | null>(null)
+  const [deleteUsage, setDeleteUsage] = useState<UsingServer[]>([])
+  const [deleteAck, setDeleteAck] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [form] = Form.useForm()
 
   const exitExportMode = () => {
@@ -249,22 +263,40 @@ const McpExternalConnections: React.FC = () => {
     }
   }
 
-  const onDelete = (row: Connection) => {
-    Modal.confirm({
-      title: t('mcp_conn_delete_title', { name: row.name }),
-      content: t('mcp_conn_delete_content'),
-      okText: t('mcp_conn_delete_ok'), okButtonProps: { danger: true },
-      cancelText: t('mcp_conn_delete_cancel'),
-      onOk: async () => {
-        try {
-          await api.delete(`/mcp-external-connections/${row.id}`)
-          message.success(t('mcp_conn_msg_deleted'))
-          reload()
-        } catch (e: any) {
-          message.error(e?.response?.data?.detail || t('mcp_conn_msg_delete_failed'))
-        }
-      },
-    })
+  const onDelete = async (row: Connection) => {
+    // Check which MCP servers bind this connection before deleting — a used
+    // connection needs explicit "unbind" confirmation (checkbox) so we never
+    // silently break a server's binding.
+    let servers: UsingServer[] = []
+    try {
+      const res: any = await api.get(`/mcp-external-connections/${row.id}/usage`)
+      servers = res?.servers || []
+    } catch {
+      // usage probe failed — fall through to a plain confirm; the backend
+      // still guards with a 409 if the connection turns out to be in use.
+    }
+    setDeleteTarget(row)
+    setDeleteUsage(servers)
+    setDeleteAck(false)
+  }
+
+  const doDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      const qs = deleteUsage.length ? '?unbind=true' : ''
+      await api.delete(`/mcp-external-connections/${deleteTarget.id}${qs}`)
+      message.success(t('mcp_conn_msg_deleted'))
+      setDeleteTarget(null)
+      reload()
+    } catch (e: any) {
+      const detail = e?.response?.data?.detail
+      message.error(
+        (detail && (detail.message || detail)) || t('mcp_conn_msg_delete_failed'),
+      )
+    } finally {
+      setDeleting(false)
+    }
   }
 
   const columns = [
@@ -446,6 +478,51 @@ const McpExternalConnections: React.FC = () => {
           </Form.Item>
         </Form>
       </Drawer>
+
+      <Modal
+        open={!!deleteTarget}
+        title={t('mcp_conn_delete_title', { name: deleteTarget?.name })}
+        okText={t('mcp_conn_delete_ok')}
+        okButtonProps={{
+          danger: true,
+          loading: deleting,
+          // A connection in use requires the explicit unbind acknowledgement.
+          disabled: deleteUsage.length > 0 && !deleteAck,
+        }}
+        cancelText={t('mcp_conn_delete_cancel')}
+        onOk={doDelete}
+        onCancel={() => setDeleteTarget(null)}
+        confirmLoading={deleting}
+        maskClosable={!deleting}
+      >
+        {deleteUsage.length === 0 ? (
+          <Text>{t('mcp_conn_delete_content')}</Text>
+        ) : (
+          <>
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 12 }}
+              message={t('mcp_conn_delete_inuse_title', { count: deleteUsage.length })}
+              description={t('mcp_conn_delete_inuse_desc')}
+            />
+            <div style={{ maxHeight: 180, overflow: 'auto', marginBottom: 12 }}>
+              {deleteUsage.map((s) => (
+                <div key={s.id} style={{ padding: '4px 0' }}>
+                  <Tag color="blue">{s.code}</Tag>
+                  <Text>{s.name}</Text>
+                </div>
+              ))}
+            </div>
+            <Checkbox
+              checked={deleteAck}
+              onChange={(e) => setDeleteAck(e.target.checked)}
+            >
+              {t('mcp_conn_delete_ack')}
+            </Checkbox>
+          </>
+        )}
+      </Modal>
     </div>
   )
 }

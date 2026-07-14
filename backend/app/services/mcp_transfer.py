@@ -113,7 +113,12 @@ def _decrypt_env(server: MCPServer) -> dict[str, str]:
         return {}
 
 
-def export_servers(db: Session, codes: Optional[list[str]] = None) -> dict[str, Any]:
+def export_servers(
+    db: Session,
+    codes: Optional[list[str]] = None,
+    *,
+    with_conn_codes: Optional[list[str]] = None,
+) -> dict[str, Any]:
     """Bundle active servers. Secret values → placeholder.
 
     ``codes`` narrows the export to specific servers (single-row export
@@ -121,7 +126,16 @@ def export_servers(db: Session, codes: Optional[list[str]] = None) -> dict[str, 
     Unknown codes are reported with a 404 rather than silently skipped —
     an export that quietly misses what the admin asked for is worse
     than an error.
+
+    ``with_conn_codes``: server codes whose BOUND external connections should
+    travel in the same file (under ``connections``, secret values still
+    placeholdered). For those servers the binding values are KEPT so the
+    target environment can wire them up automatically on import; for the rest
+    the binding is blanked (the referenced connection only exists here) but
+    the key stays as a "needs binding" marker for the import dialog. Chosen
+    per-server so a batch export can mix "with" and "without".
     """
+    with_conn = set(with_conn_codes or ())
     q = db.query(MCPServer).filter(MCPServer.deleted_at.is_(None))
     if codes:
         q = q.filter(MCPServer.code.in_(codes))
@@ -133,31 +147,103 @@ def export_servers(db: Session, codes: Optional[list[str]] = None) -> dict[str, 
                 status_code=404,
                 detail=f"找不到以下 MCP 服务器:{'、'.join(sorted(missing))}",
             )
+    with_conn_servers = [s for s in servers if s.code in with_conn]
     items: list[dict[str, Any]] = []
     for s in servers:
+        keep_binding = s.code in with_conn
         item: dict[str, Any] = {f: getattr(s, f) for f in _SERVER_PLAIN_FIELDS}
         item["status"] = s.status
         item["auth_secret"] = SECRET_PLACEHOLDER if s.auth_secret else None
         env = _decrypt_env(s)
-        # Binding keys reference an external connection that only exists in
-        # THIS environment — blank the value (keep the key so the importer
-        # knows a binding is expected and prompts for one) rather than
-        # carrying a code that won't resolve in the target environment.
+        # Binding keys reference an external connection. If this server carries
+        # its connections (keep_binding), keep the value so it resolves on
+        # import; otherwise blank it but keep the key as a "needs binding"
+        # marker for the import dialog.
         item["env_config"] = {
             k: (
-                "" if k in _BINDING_ENV_KEYS
+                (v if keep_binding else "") if k in _BINDING_ENV_KEYS
                 else SECRET_PLACEHOLDER if _sensitive_env_key(k)
                 else v
             )
             for k, v in env.items()
         } or None
         items.append(item)
-    return {
+
+    bundle: dict[str, Any] = {
         "kind": BUNDLE_KIND_SERVERS,
         "version": BUNDLE_VERSION,
         "exported_at": datetime.utcnow().isoformat() + "Z",
         "items": items,
     }
+    if with_conn_servers:
+        bound = _bound_connection_codes(with_conn_servers)
+        conns = (
+            db.query(MCPExternalConnection)
+            .filter(
+                MCPExternalConnection.deleted_at.is_(None),
+                MCPExternalConnection.code.in_(bound),
+            )
+            .order_by(MCPExternalConnection.code)
+            .all()
+        ) if bound else []
+        bundle["connections"] = [_connection_to_export_item(c) for c in conns]
+    return bundle
+
+
+def resolve_export_server_codes(db: Session, codes: Optional[list[str]]) -> list[str]:
+    """The concrete server codes an export will produce. ``codes`` given →
+    validated as-is (unknown → 404); ``None`` → all active servers. Lets the
+    endpoint decide JSON vs zip purely by 'how many servers come out'."""
+    if codes:
+        found = {
+            s.code for s in db.query(MCPServer.code)
+            .filter(MCPServer.deleted_at.is_(None), MCPServer.code.in_(codes)).all()
+        }
+        missing = set(codes) - found
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"找不到以下 MCP 服务器:{'、'.join(sorted(missing))}",
+            )
+        return codes
+    return [
+        s.code for s in db.query(MCPServer.code)
+        .filter(MCPServer.deleted_at.is_(None)).order_by(MCPServer.code).all()
+    ]
+
+
+def export_servers_zip(
+    db: Session,
+    codes: list[str],
+    *,
+    with_conn_codes: Optional[list[str]] = None,
+) -> bytes:
+    """Batch export: ONE self-contained JSON per server, packed into a zip.
+
+    Each server's file is a normal single-server bundle produced by
+    :func:`export_servers`; if that server was chosen to carry its bound
+    connections, they live inside its OWN file (per user spec — files are
+    independent, a connection travels with the server that binds it).
+    Uses the stdlib zipfile, same as the agent batch export.
+    """
+    import zipfile
+    from io import BytesIO
+
+    with_conn = set(with_conn_codes or ())
+    archive = BytesIO()
+    used: set[str] = set()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for code in codes:
+            single = export_servers(
+                db, codes=[code],
+                with_conn_codes=[code] if code in with_conn else None,
+            )
+            name = f"mcp-{code}.json"
+            if name in used:  # codes are unique, but be defensive
+                name = f"mcp-{code}-{len(used)}.json"
+            used.add(name)
+            zf.writestr(name, json.dumps(single, ensure_ascii=False, indent=2))
+    return archive.getvalue()
 
 
 def _error_text(exc: Exception) -> str:
@@ -249,6 +335,57 @@ def import_servers(
 # ── external connections ─────────────────────────────────────────────────────
 
 
+def _connection_to_export_item(c: "MCPExternalConnection") -> dict[str, Any]:
+    """Serialize one connection for an export bundle. Secret values → placeholder
+    (keys kept); config / allowed_scopes are non-secret and exported as-is."""
+    return {
+        "code": c.code,
+        "name": c.name,
+        "connection_type": c.connection_type,
+        "enabled": bool(c.enabled),
+        "config": c.config_json or {},
+        "secret": {k: SECRET_PLACEHOLDER for k in (c.secret_json or {})},
+        "allowed_scopes": c.allowed_scopes_json or {},
+    }
+
+
+def _bound_connection_codes(servers: list["MCPServer"]) -> list[str]:
+    """Connection codes referenced by these servers' env_config binding keys
+    (connection_id / server_auth_connection_id)."""
+    codes: set[str] = set()
+    for s in servers:
+        env = _decrypt_env(s)
+        for k in _BINDING_ENV_KEYS:
+            v = env.get(k)
+            if isinstance(v, str) and v.strip():
+                codes.add(v.strip())
+    return sorted(codes)
+
+
+def server_binding_summary(db: Session, codes: list[str]) -> list[dict[str, Any]]:
+    """For each server code, list the connection codes it is bound to. Powers
+    the export dialog's per-server 'include its connections' checkboxes — a
+    server with no bindings gets an empty list (checkbox not offered)."""
+    if not codes:
+        return []
+    servers = (
+        db.query(MCPServer)
+        .filter(MCPServer.deleted_at.is_(None), MCPServer.code.in_(codes))
+        .order_by(MCPServer.code)
+        .all()
+    )
+    out: list[dict[str, Any]] = []
+    for s in servers:
+        env = _decrypt_env(s)
+        bound = sorted({
+            env[k].strip()
+            for k in _BINDING_ENV_KEYS
+            if isinstance(env.get(k), str) and env[k].strip()
+        })
+        out.append({"code": s.code, "name": s.name, "bound_connections": bound})
+    return out
+
+
 def export_connections(
     db: Session, codes: Optional[list[str]] = None,
 ) -> dict[str, Any]:
@@ -268,24 +405,56 @@ def export_connections(
                 status_code=404,
                 detail=f"找不到以下外部连接:{'、'.join(sorted(missing))}",
             )
-    items = [
-        {
-            "code": c.code,
-            "name": c.name,
-            "connection_type": c.connection_type,
-            "enabled": bool(c.enabled),
-            "config": c.config_json or {},
-            "secret": {k: SECRET_PLACEHOLDER for k in (c.secret_json or {})},
-            "allowed_scopes": c.allowed_scopes_json or {},
-        }
-        for c in conns
-    ]
+    items = [_connection_to_export_item(c) for c in conns]
     return {
         "kind": BUNDLE_KIND_CONNECTIONS,
         "version": BUNDLE_VERSION,
         "exported_at": datetime.utcnow().isoformat() + "Z",
         "items": items,
     }
+
+
+def resolve_export_connection_codes(db: Session, codes: Optional[list[str]]) -> list[str]:
+    """Connection-side twin of :func:`resolve_export_server_codes`: the concrete
+    connection codes an export will produce (selection validated, or all)."""
+    if codes:
+        found = {
+            c.code for c in db.query(MCPExternalConnection.code)
+            .filter(MCPExternalConnection.deleted_at.is_(None),
+                    MCPExternalConnection.code.in_(codes)).all()
+        }
+        missing = set(codes) - found
+        if missing:
+            raise HTTPException(
+                status_code=404,
+                detail=f"找不到以下外部连接:{'、'.join(sorted(missing))}",
+            )
+        return codes
+    return [
+        c.code for c in db.query(MCPExternalConnection.code)
+        .filter(MCPExternalConnection.deleted_at.is_(None))
+        .order_by(MCPExternalConnection.code).all()
+    ]
+
+
+def export_connections_zip(db: Session, codes: list[str]) -> bytes:
+    """Batch connection export: ONE self-contained JSON per connection, zipped
+    (mirrors :func:`export_servers_zip`). Each file reuses the single-code
+    export so the format is identical to a single-connection download."""
+    import zipfile
+    from io import BytesIO
+
+    archive = BytesIO()
+    used: set[str] = set()
+    with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for code in codes:
+            single = export_connections(db, codes=[code])
+            name = f"mcp-conn-{code}.json"
+            if name in used:
+                name = f"mcp-conn-{code}-{len(used)}.json"
+            used.add(name)
+            zf.writestr(name, json.dumps(single, ensure_ascii=False, indent=2))
+    return archive.getvalue()
 
 
 def existing_server_codes(db: Session, codes: list[str]) -> list[str]:

@@ -8,12 +8,13 @@
  * 有冲突就弹窗让用户逐条决定 —— 跳过,或重新输入一个新编码导入。新编码
  * 输入后立即做唯一性校验(查库 + 查文件内重复),重复会标红提醒。
  */
-import React, { useState } from 'react'
-import { Button, Input, Modal, Radio, Select, Space, Tooltip, Typography, message } from 'antd'
+import React, { useRef, useState } from 'react'
+import { Button, Checkbox, Input, Modal, Radio, Select, Space, Tooltip, Typography, message } from 'antd'
 import { DownloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import i18n from 'i18next'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 
 const { Text } = Typography
 
@@ -50,20 +51,38 @@ export async function fetchExistingCodes(path: string, codes: string[]): Promise
  *  全部 = 表头全选)。 */
 export async function downloadExport(
   path: string, filenamePrefix: string, codes: string[],
+  opts?: { withConnCodes?: string[] },
 ): Promise<void> {
   if (!codes.length) return
   try {
-    const bundle = await api.get<Record<string, unknown>>(
-      `${path}/export`, { params: { codes: codes.join(',') } },
-    )
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
+    // Batch (2+) returns a zip, single returns JSON — the response is binary
+    // either way and we need the headers to name the file, so fetch directly
+    // (the api wrapper only exposes response.data).
+    const qs = new URLSearchParams({ codes: codes.join(',') })
+    if (opts?.withConnCodes?.length) qs.set('with_conn_codes', opts.withConnCodes.join(','))
+    const base = (import.meta as any).env?.VITE_API_URL || '/api/v1'
+    const token = useAuthStore.getState().token
+    const resp = await fetch(`${base}${path}/export?${qs.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!resp.ok) {
+      let msg = `导出失败 (${resp.status})`
+      try { const j = await resp.json(); msg = j?.detail?.message || j?.detail || msg } catch { /* not json */ }
+      message.error(msg)
+      return
+    }
+    const blob = await resp.blob()
+    const cd = resp.headers.get('content-disposition') || ''
+    const m = cd.match(/filename="?([^"]+)"?/)
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    const isZip = (resp.headers.get('content-type') || '').includes('zip')
+    const fallback = codes.length === 1
+      ? `${filenamePrefix}-${codes[0]}-${stamp}.json`
+      : `${filenamePrefix}-${stamp}.${isZip ? 'zip' : 'json'}`
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
     a.href = url
-    a.download = codes.length === 1
-      ? `${filenamePrefix}-${codes[0]}-${stamp}.json`
-      : `${filenamePrefix}-${stamp}.json`
+    a.download = m ? m[1] : fallback
     a.click()
     URL.revokeObjectURL(url)
     message.success(i18n.t('mcp_transfer_export_success'))
@@ -72,31 +91,135 @@ export async function downloadExport(
   }
 }
 
-function showImportResult(res: TransferImportResult, userSkipped = 0): void {
+interface ServerBinding {
+  code: string
+  name: string
+  bound_connections: string[]
+}
+
+/** 批量导出确认弹窗:逐个服务器勾选是否一并导出其绑定的外部连接。
+ *  确认后:多个服务器 → 后端返回 zip(每服务器一个 JSON);单个 → JSON。
+ *  ``codes`` 为空(null)= 关闭。 */
+export function ExportServersModal({
+  codes, onClose,
+}: { codes: string[] | null; onClose: () => void }) {
+  const { t } = useTranslation()
+  const [rows, setRows] = useState<ServerBinding[]>([])
+  const [withConn, setWithConn] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  React.useEffect(() => {
+    if (!codes?.length) return
+    setLoading(true)
+    setWithConn(new Set())
+    api.get<{ servers: ServerBinding[] }>('/mcp-servers/binding-summary', { params: { codes: codes.join(',') } })
+      .then((r) => setRows(r.servers || []))
+      .catch(() => setRows(codes.map((c) => ({ code: c, name: c, bound_connections: [] }))))
+      .finally(() => setLoading(false))
+  }, [codes])
+
+  const toggle = (code: string, on: boolean) => {
+    setWithConn((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(code); else next.delete(code)
+      return next
+    })
+  }
+  const bindable = rows.filter((r) => r.bound_connections.length > 0)
+  const allOn = bindable.length > 0 && bindable.every((r) => withConn.has(r.code))
+
+  const onOk = async () => {
+    if (!codes?.length) return
+    setExporting(true)
+    try {
+      await downloadExport('/mcp-servers', 'mcp-servers', codes, { withConnCodes: [...withConn] })
+      onClose()
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={!!codes?.length}
+      title={t('mcp_transfer_export_modal_title')}
+      okText={t('mcp_transfer_export_modal_ok')}
+      okButtonProps={{ loading: exporting }}
+      onOk={onOk}
+      onCancel={onClose}
+      width={560}
+    >
+      <p><Text type="secondary">{t('mcp_transfer_export_modal_hint', { count: codes?.length || 0 })}</Text></p>
+      {bindable.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <a onClick={() => setWithConn(allOn ? new Set() : new Set(bindable.map((r) => r.code)))}>
+            {allOn ? t('mcp_transfer_export_modal_none') : t('mcp_transfer_export_modal_all')}
+          </a>
+        </div>
+      )}
+      <div style={{ maxHeight: 320, overflow: 'auto' }}>
+        {(loading ? (codes || []).map((c) => ({ code: c, name: c, bound_connections: [] })) : rows).map((r) => (
+          <div key={r.code} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span><Text code>{r.code}</Text> <Text type="secondary" style={{ fontSize: 12 }}>{r.name}</Text></span>
+            {r.bound_connections.length > 0 ? (
+              <Checkbox checked={withConn.has(r.code)} onChange={(e) => toggle(r.code, e.target.checked)}>
+                {t('mcp_transfer_export_modal_incl', { n: r.bound_connections.length })}
+              </Checkbox>
+            ) : (
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_transfer_export_modal_no_binding')}</Text>
+            )}
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
+/** 导入结束弹窗:显示本轮结果(新建/跳过/失败明细),两个按钮——
+ *  「关闭」结束,「继续导入」立即再开一轮文件选择,方便一个个连着导。 */
+function showImportResult(
+  res: TransferImportResult, userSkipped: number, onContinue: () => void,
+): void {
   // 用户在冲突弹窗里选「跳过」的条目不会发给后端,这里合并计入提示
   const line = i18n.t('mcp_transfer_import_result_line', {
     created: res.created.length,
     skipped: res.skipped.length + userSkipped,
     failed: res.errors.length,
   })
-  if (res.errors?.length) {
-    Modal.warning({
-      title: i18n.t('mcp_transfer_import_partial_title'),
-      width: 560,
-      content: (
-        <div>
-          <p>{line}</p>
-          <ul style={{ maxHeight: 240, overflow: 'auto', paddingLeft: 18 }}>
+  const modal = Modal[res.errors?.length ? 'warning' : 'success']({
+    title: i18n.t(res.errors?.length
+      ? 'mcp_transfer_import_partial_title'
+      : 'mcp_transfer_import_done_title'),
+    width: 560,
+    content: (
+      <div>
+        <p>{line}</p>
+        {res.created.length > 0 && (
+          <p style={{ margin: '4px 0' }}>
+            <span style={{ color: '#52c41a' }}>✓ </span>
+            {i18n.t('mcp_transfer_import_created_list', { codes: res.created.join('、') })}
+          </p>
+        )}
+        {res.errors?.length > 0 && (
+          <ul style={{ maxHeight: 200, overflow: 'auto', paddingLeft: 18 }}>
             {res.errors.map((er, idx) => (
               <li key={idx}><b>{er.code || '?'}</b>: {er.message}</li>
             ))}
           </ul>
-        </div>
-      ),
-    })
-  } else {
-    message.success(line)
-  }
+        )}
+      </div>
+    ),
+    okText: i18n.t('mcp_transfer_import_close'),
+    // 「继续导入」用 cancel 位放一个次要按钮。禁掉 X / 遮罩关闭,避免误触
+    // continue —— 只能从两个明确按钮里选。
+    okCancel: true,
+    cancelText: i18n.t('mcp_transfer_import_continue'),
+    closable: false,
+    maskClosable: false,
+    keyboard: false,
+    onCancel: () => { modal.destroy(); onContinue() },
+  })
 }
 
 interface ConflictDecision {
@@ -104,6 +227,7 @@ interface ConflictDecision {
   action: 'skip' | 'rename'
   newCode: string
   error: string
+  validated: boolean  // rename 的新 code 是否已通过查重校验(未通过则禁用确定)
 }
 
 /** 服务器条目需要绑定外部连接时的选择。绑定靠连接的 code
@@ -182,9 +306,9 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
     setImporting(true)
     try {
       const res = await api.post<TransferImportResult>(`${path}/import`, b)
-      showImportResult(res, userSkipped)
       closeModal()
       onDone()
+      showImportResult(res, userSkipped, pickFile)
     } catch (e: any) {
       message.error(e?.response?.data?.detail?.message || e?.response?.data?.detail || e?.message || String(e))
     } finally {
@@ -256,7 +380,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
       }
       // 有编码冲突 / 缺连接绑定 / 待填鉴权 → 弹窗逐条确认
       setDecisions(existing.map((code) => ({
-        original: code, action: 'skip', newCode: '', error: '',
+        original: code, action: 'skip', newCode: '', error: '', validated: false,
       })))
       setConnFixes(fixes)
       setSecretFills(fills)
@@ -269,13 +393,22 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
     setDecisions((prev) => prev.map((d, i) => (i === idx ? { ...d, ...patch } : d)))
   }
 
-  /** 新编码的即时校验:格式 → 文件内重复 → 查库重复。 */
-  const validateNewCode = async (idx: number) => {
+  // 输入停顿即校验(去抖),不必等失焦——填完停一下确定按钮就自动判定。
+  // 显式传入待校验的值,避免去抖回调读到闭包里过期的 decisions。
+  const codeDebounce = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+  const scheduleValidate = (idx: number, value: string) => {
+    clearTimeout(codeDebounce.current[idx])
+    codeDebounce.current[idx] = setTimeout(() => validateNewCode(idx, value), 400)
+  }
+
+  /** 新编码的即时校验:格式 → 文件内重复 → 查库重复。
+   *  ``explicit`` 用于去抖路径传当次输入值;省略则读当前状态(失焦路径)。 */
+  const validateNewCode = async (idx: number, explicit?: string) => {
     const d = decisions[idx]
     if (d.action !== 'rename') return
-    const v = d.newCode.trim()
-    if (!v) { setDecision(idx, { error: t('mcp_transfer_code_required') }); return }
-    if (!CODE_PATTERN.test(v)) { setDecision(idx, { error: t('mcp_transfer_code_format') }); return }
+    const v = (explicit !== undefined ? explicit : d.newCode).trim()
+    if (!v) { setDecision(idx, { error: t('mcp_transfer_code_required'), validated: false }); return }
+    if (!CODE_PATTERN.test(v)) { setDecision(idx, { error: t('mcp_transfer_code_format'), validated: false }); return }
     const fileCodes: string[] = (bundle?.items || [])
       .map((it: any) => String(it?.code || '').trim())
       .filter((c: string) => c !== d.original)
@@ -283,15 +416,20 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
       .filter((x, i) => i !== idx && x.action === 'rename')
       .map((x) => x.newCode.trim())
     if (fileCodes.includes(v) || otherNew.includes(v)) {
-      setDecision(idx, { error: t('mcp_transfer_code_duplicate_in_file') })
+      setDecision(idx, { error: t('mcp_transfer_code_duplicate_in_file'), validated: false })
       return
     }
     try {
       const taken = await fetchExistingCodes(path, [v])
-      setDecision(idx, { error: taken.includes(v) ? t('mcp_transfer_code_taken') : '' })
+      if (taken.includes(v)) {
+        setDecision(idx, { error: t('mcp_transfer_code_taken'), validated: false })
+      } else {
+        setDecision(idx, { error: '', validated: true })   // 唯一通过校验的路径
+      }
     } catch {
-      // 校验接口偶发失败不挡输入;确认导入前还会整体复查一遍
-      setDecision(idx, { error: '' })
+      // 查重接口偶发失败:不误报错,但也不算通过(确定按钮仍禁用,
+      // 促使用户重试失焦触发校验)。
+      setDecision(idx, { error: '', validated: false })
     }
   }
 
@@ -390,9 +528,10 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
     setSecretFills((prev) => prev.map((f, i) => (i === idx ? { ...f, json, error: '' } : f)))
   }
 
-  // 连接不选 = 留空稍后配,不阻塞确认;仅编码冲突未解决时禁用
+  // 确定按钮:任何"改名"项必须已通过查重校验(validated)才放行 —— 光输入、
+  // 未失焦触发校验的中间态一律禁用。跳过项、留空鉴权不阻塞。
   const hasBlockingError = decisions.some(
-    (d) => d.action === 'rename' && (d.error !== '' || !d.newCode.trim()),
+    (d) => d.action === 'rename' && !d.validated,
   )
 
   /** 外部连接导入弹窗:按连接聚合渲染。每条连接一块,内容由其状态决定:
@@ -423,7 +562,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
                 <Radio.Group
                   size="small"
                   value={d.action}
-                  onChange={(e) => setDecision(dIdx, { action: e.target.value, error: '' })}
+                  onChange={(e) => setDecision(dIdx, { action: e.target.value, error: '', validated: false })}
                   options={[
                     { label: t('mcp_transfer_conflict_skip'), value: 'skip' },
                     { label: t('mcp_transfer_conflict_rename'), value: 'rename' },
@@ -441,7 +580,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
                   placeholder={t('mcp_transfer_conflict_new_code_placeholder')}
                   value={d.newCode}
                   status={d.error ? 'error' : undefined}
-                  onChange={(e) => setDecision(dIdx, { newCode: e.target.value, error: '' })}
+                  onChange={(e) => { setDecision(dIdx, { newCode: e.target.value, error: '', validated: false }); scheduleValidate(dIdx, e.target.value) }}
                   onBlur={() => validateNewCode(dIdx)}
                 />
                 {/* 固定高度占位:报错显隐不改变下方布局,避免整窗跳动 */}

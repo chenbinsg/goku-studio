@@ -22,7 +22,7 @@ import ServerDrawer, {
   SERVICE_CATEGORY_VALUES, STATUS_COLORS, HEALTH_COLORS, fmt,
   type MCPServerDetail,
 } from './ServerDrawer'
-import { downloadExport, McpImportButton } from './mcpTransfer'
+import { downloadExport, McpImportButton, ExportServersModal } from './mcpTransfer'
 
 const { Title, Text } = Typography
 
@@ -85,6 +85,8 @@ const McpServerList: React.FC = () => {
   const [exportMode, setExportMode] = useState(false)
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([])
   const [selectedCodes, setSelectedCodes] = useState<string[]>([])
+  // 导出确认弹窗:逐个服务器勾选是否一并导出其绑定的外部连接
+  const [exportModalCodes, setExportModalCodes] = useState<string[] | null>(null)
 
   const exitExportMode = () => {
     setExportMode(false)
@@ -92,9 +94,9 @@ const McpServerList: React.FC = () => {
     setSelectedCodes([])
   }
 
-  const onExportSelected = async () => {
-    await downloadExport('/mcp-servers', 'mcp-servers', selectedCodes)
-    exitExportMode()
+  // 点「导出所选」→ 打开确认弹窗(逐服务器选带不带连接)
+  const onExportSelected = () => {
+    if (selectedCodes.length > 0) setExportModalCodes([...selectedCodes])
   }
 
   const fetchStats = async () => {
@@ -300,7 +302,19 @@ const McpServerList: React.FC = () => {
       key: 'export',
       icon: <DownloadOutlined />,
       label: t('mcp_transfer_export_row'),
-      onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code]),
+      children: [
+        {
+          key: 'export-plain',
+          label: t('mcp_transfer_export_server_only'),
+          onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code]),
+        },
+        {
+          key: 'export-with-conns',
+          label: t('mcp_transfer_export_with_conns'),
+          onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code],
+            { withConnCodes: [server.code] }),
+        },
+      ],
     },
     {
       key: 'toggle',
@@ -579,6 +593,11 @@ const McpServerList: React.FC = () => {
         detail={editingDetail}
         onClose={() => setDrawerOpen(false)}
         onSaved={reloadAll}
+      />
+
+      <ExportServersModal
+        codes={exportModalCodes}
+        onClose={() => { setExportModalCodes(null); exitExportMode() }}
       />
     </div>
   )

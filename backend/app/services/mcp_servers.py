@@ -53,6 +53,7 @@ from app.schemas import (
     MCPServerUpdate,
 )
 from app.services import encryption
+from app.services.mcp_external_connections import MARKER_CONNECTION_DELETED
 
 logger = logging.getLogger(__name__)
 
@@ -209,7 +210,26 @@ def get_detail(db: Session, server_id: str) -> MCPServerDetail:
 
 # ─── Serialization helpers ─────────────────────────────────────────────
 
-def _secrets_view(server: MCPServer) -> MCPServerSecretsView:
+def _connection_exists(db: Optional[Session], code: Optional[str]) -> bool:
+    """True if ``code`` references a live (non-deleted) external connection.
+    ``None`` db (list path — cheap, no per-row query) or blank code → True so
+    we never spuriously flag a binding as lost without actually checking."""
+    if db is None or not code:
+        return True
+    return (
+        db.query(MCPExternalConnection.id)
+        .filter(
+            MCPExternalConnection.code == code,
+            MCPExternalConnection.deleted_at.is_(None),
+        )
+        .first()
+        is not None
+    )
+
+
+def _secrets_view(
+    server: MCPServer, db: Optional[Session] = None,
+) -> MCPServerSecretsView:
     """Build the masked secrets view exposed in the API response.
 
     ``env_config`` stores an encrypted JSON dict — to surface "which
@@ -217,6 +237,11 @@ def _secrets_view(server: MCPServer) -> MCPServerSecretsView:
     names, then drop the plaintext. Decryption errors fall through to
     "configured but unreadable" so a borked key doesn't 500 the list
     page; the caller will see ``env_config_keys=[]``.
+
+    When ``db`` is supplied (detail path), a bound connection that no longer
+    exists — deleted by our cascade (explicit ``__connection_deleted__``
+    marker) OR out-of-band (DB op / pre-cascade deletion, no marker) — is
+    surfaced as ``env_config_binding_lost`` so the UI shows the same prompt.
     """
     auth_set = bool(server.auth_secret)
     env_set = bool(server.env_config)
@@ -224,12 +249,19 @@ def _secrets_view(server: MCPServer) -> MCPServerSecretsView:
     env_preview: dict[str, str] = {}
     connection_id: Optional[str] = None
     server_auth_connection_id: Optional[str] = None
+    binding_lost: Optional[dict] = None
     if env_set:
         try:
             plain = encryption.decrypt_secret(server.env_config)
             if plain:
                 data = json.loads(plain)
                 if isinstance(data, dict):
+                    # Internal marker: a bound external connection was deleted.
+                    # Surface it (so the UI can prompt) but keep it out of the
+                    # operator-facing key list / preview — it's not an env var.
+                    _marker = data.pop(MARKER_CONNECTION_DELETED, None)
+                    if isinstance(_marker, dict):
+                        binding_lost = _marker
                     env_keys = list(data.keys())
                     raw_conn = data.get("connection_id")
                     if isinstance(raw_conn, str) and raw_conn.strip():
@@ -259,6 +291,24 @@ def _secrets_view(server: MCPServer) -> MCPServerSecretsView:
                 "env_config decryption failed for server %s: %s",
                 server.id, e,
             )
+    # No explicit marker but a bound connection that no longer resolves —
+    # synthesize the same "binding lost" payload so pre-cascade / out-of-band
+    # deletions surface the prompt too (and let the user clear the dead
+    # binding instead of being stuck on the save-time "connection not found").
+    if binding_lost is None and db is not None:
+        dead_keys = [
+            key for key, code in (
+                ("connection_id", connection_id),
+                ("server_auth_connection_id", server_auth_connection_id),
+            )
+            if code and not _connection_exists(db, code)
+        ]
+        if dead_keys:
+            binding_lost = {
+                "code": connection_id if "connection_id" in dead_keys else server_auth_connection_id,
+                "keys": dead_keys,
+                "missing": True,
+            }
     return MCPServerSecretsView(
         auth_secret_configured=auth_set,
         auth_secret_display=encryption.mask_secret(server.auth_secret),
@@ -268,10 +318,13 @@ def _secrets_view(server: MCPServer) -> MCPServerSecretsView:
         env_config_preview=env_preview,
         env_config_connection_id=connection_id,
         env_config_server_auth_connection_id=server_auth_connection_id,
+        env_config_binding_lost=binding_lost,
     )
 
 
-def _compute_configuration_status(server: MCPServer) -> str:
+def _compute_configuration_status(
+    server: MCPServer, db: Optional[Session] = None,
+) -> str:
     """Derived field: ``"incomplete"`` when start_command flags the
     server as needs-connection but env_config doesn't carry a
     ``connection_id``; ``"ok"`` otherwise.
@@ -283,7 +336,10 @@ def _compute_configuration_status(server: MCPServer) -> str:
 
     Cheap to compute: one Fernet decrypt + JSON parse per row. Called
     on every list/detail response so admins never see a stale "正常"
-    on a misconfigured server.
+    on a misconfigured server. When ``db`` is supplied (detail path) a
+    ``connection_id`` that references a now-missing connection is also
+    demoted to ``"incomplete"`` — a dangling binding is as unusable as
+    an absent one.
     """
     required = _needs_connection(server.start_command)
     if required is None:
@@ -297,6 +353,8 @@ def _compute_configuration_status(server: MCPServer) -> str:
             return "incomplete"
         conn_id = data.get("connection_id")
         if not isinstance(conn_id, str) or not conn_id.strip():
+            return "incomplete"
+        if not _connection_exists(db, conn_id.strip()):
             return "incomplete"
         return "ok"
     except Exception:
@@ -335,7 +393,8 @@ def to_list_item(
 def to_detail(server: MCPServer) -> MCPServerDetail:
     # Reuse the same batch GROUP BY as the list page so detail and list
     # surface identical counts. One server lookup runs two trivial queries.
-    cap_counts, authz_counts_one = _aggregate_counts(_session_for(server), [server.id])
+    _db = _session_for(server)
+    cap_counts, authz_counts_one = _aggregate_counts(_db, [server.id])
     return MCPServerDetail(
         id=server.id,
         name=server.name,
@@ -351,7 +410,7 @@ def to_detail(server: MCPServer) -> MCPServerDetail:
         retry_count=server.retry_count,
         auth_type=server.auth_type,
         auth_header_name=server.auth_header_name,
-        secrets=_secrets_view(server),
+        secrets=_secrets_view(server, _db),
         status=server.status,
         health_status=server.health_status,
         last_checked_at=server.last_checked_at,
@@ -361,7 +420,7 @@ def to_detail(server: MCPServer) -> MCPServerDetail:
         last_sync_error_message=server.last_sync_error_message,
         capability_count=cap_counts.get(server.id, 0),
         authorized_principal_count=authz_counts_one.get(server.id, 0),
-        configuration_status=_compute_configuration_status(server),
+        configuration_status=_compute_configuration_status(server, _db),
         auto_sync_enabled=server.auto_sync_enabled,
         sync_frequency=server.sync_frequency,
         sync_scope=server.sync_scope,
@@ -563,6 +622,7 @@ def _validate_env_config(
     env: Optional[dict],
     *,
     start_command: Optional[str],
+    prev_env: Optional[dict] = None,
 ) -> None:
     """Validate an incoming env_config dict before encryption / storage.
 
@@ -578,6 +638,14 @@ def _validate_env_config(
          (`MCP_CONNECTION_REQUIRED`). Connection-type mismatch (e.g.
          binding a `database` connection to a storage_s3 server) is also
          rejected with the same code so the dropdown can stay simple.
+
+    ``prev_env`` (the server's currently-stored env_config, on update) lets
+    Rule 2 GRANDFATHER an unchanged binding: we only assert existence /
+    enabled / type for a connection the user is actually SETTING or CHANGING
+    in this request. A binding the user is removing isn't in ``env`` (so it's
+    never validated), and a pre-existing binding they leave untouched isn't
+    re-asserted — otherwise a since-deleted connection would lock you out of
+    editing the server or even clearing that very binding.
     """
     if not env:
         # No env_config at all — only valid if the server doesn't need one.
@@ -614,6 +682,12 @@ def _validate_env_config(
                 f"「{label}」必须是有效的外部连接编码,请从下拉中选择。",
             )
         conn_code = raw.strip()
+        # Grandfather an unchanged binding: if this key already carried the
+        # same code in the stored env, the user isn't (re)binding it now —
+        # don't re-assert its existence / enabled / type. Lets you edit other
+        # fields (or clear this binding) even after its connection was deleted.
+        if prev_env is not None and str(prev_env.get(key) or "").strip() == conn_code:
+            return None
         row = (
             db.query(MCPExternalConnection)
             .filter(
@@ -650,17 +724,20 @@ def _validate_env_config(
     # header — there's no need for other types here.
     _lookup("server_auth_connection_id", required_type="url", label="MCP Server 调用鉴权")
 
-    # Rule 3: if the server needs a connection, one must be bound — and
-    # its type must match.
+    # Rule 3: if the server needs a connection, one must be present — by
+    # KEY presence (a grandfathered unchanged binding returns bound=None but
+    # still counts). Type mismatch is only checked for a binding we actually
+    # validated this request (bound is not None).
     required_type = _needs_connection(start_command)
     if required_type:
-        if bound is None:
+        conn_present = isinstance(env.get("connection_id"), str) and bool(env["connection_id"].strip())
+        if not conn_present:
             _raise_400(
                 "MCP_CONNECTION_REQUIRED",
                 f"该 MCP Server 必须绑定 {required_type} 类型的外部连接。"
                 f"请在「绑定外部连接」下拉中选择对应连接。",
             )
-        if bound.connection_type != required_type:
+        if bound is not None and bound.connection_type != required_type:
             _raise_400(
                 "MCP_CONNECTION_REQUIRED",
                 f"该 MCP Server 需要 {required_type} 类型的外部连接,"
@@ -844,29 +921,36 @@ def update_server(
             # as auth_secret. Use clear_env_config=True to actually wipe.
             data.pop("env_config")
         else:
+            # Decrypt the currently-stored env once — used both for the
+            # mask-keep merge below and as ``prev_env`` so validation can
+            # grandfather unchanged bindings.
+            _old_env: dict = {}
+            if server.env_config:
+                try:
+                    _old_plain = encryption.decrypt_secret(server.env_config)
+                    _parsed = json.loads(_old_plain) if _old_plain else {}
+                    _old_env = _parsed if isinstance(_parsed, dict) else {}
+                except Exception:
+                    _old_env = {}
             # Mask-keep merge: the edit drawer prefills values as masked
             # previews (env_config_preview). Any incoming value that still
             # looks masked means "the user did not edit this key" — keep the
             # stored value instead of persisting the mask string itself.
-            if isinstance(new_env, dict) and server.env_config:
-                try:
-                    _old_plain = encryption.decrypt_secret(server.env_config)
-                    _old_env = json.loads(_old_plain) if _old_plain else {}
-                except Exception:
-                    _old_env = {}
-                if isinstance(_old_env, dict):
-                    for _k, _v in list(new_env.items()):
-                        if (
-                            isinstance(_v, str)
-                            and encryption.looks_like_mask(_v)
-                            and _k in _old_env
-                        ):
-                            new_env[_k] = _old_env[_k]
+            if isinstance(new_env, dict) and _old_env:
+                for _k, _v in list(new_env.items()):
+                    if (
+                        isinstance(_v, str)
+                        and encryption.looks_like_mask(_v)
+                        and _k in _old_env
+                    ):
+                        new_env[_k] = _old_env[_k]
             # `start_command` may also be updated in the same PATCH —
             # validate against the post-update value so needs-connection
             # check reflects the final state of the row.
             effective_command = data.get("start_command", server.start_command)
-            _validate_env_config(db, new_env, start_command=effective_command)
+            _validate_env_config(
+                db, new_env, start_command=effective_command, prev_env=_old_env,
+            )
             data["env_config"] = _encrypt_env_dict(new_env)
     else:
         # env_config wasn't touched in this PATCH, but start_command might
@@ -878,8 +962,13 @@ def update_server(
                 plain = encryption.decrypt_secret(server.env_config)
                 stored = json.loads(plain) if plain else None
                 if isinstance(stored, dict):
+                    # env_config is unchanged here — pass it as prev_env so a
+                    # pre-existing (possibly now-dead) binding doesn't block a
+                    # pure start_command edit. Rule 3's presence check still
+                    # enforces that a needs-connection server keeps a binding.
                     _validate_env_config(
                         db, stored, start_command=data["start_command"],
+                        prev_env=stored,
                     )
             except HTTPException:
                 raise
@@ -1003,6 +1092,49 @@ def soft_delete_server(
     # core also purges the knowledge catalog (embedding/vector_store are
     # runtime-only modules — Studio must not touch them).
     _trigger_runtime_refresh(server.code, request)
+
+
+def acknowledge_binding_lost(
+    db: Session,
+    server_id: str,
+    *,
+    user_id: Optional[str],
+    request: Optional[Request] = None,
+) -> MCPServerDetail:
+    """Dismiss the "your bound external connection was deleted" prompt on a
+    server. Clears the ``__connection_deleted__`` marker (cascade path) AND
+    strips any binding key (``connection_id`` / ``server_auth_connection_id``)
+    that now references a missing connection — a dangling binding left by a
+    pre-cascade / out-of-band deletion, which is what strands the save-time
+    "connection not found" error. Pure acknowledgement: it does NOT re-bind
+    anything. Idempotent (nothing to clear → no-op).
+    """
+    server = _get_by_id_strict(db, server_id)
+    if server.env_config:
+        try:
+            plain = encryption.decrypt_secret(server.env_config)
+            data = json.loads(plain) if plain else None
+        except Exception:
+            data = None
+        if isinstance(data, dict):
+            marker = data.pop(MARKER_CONNECTION_DELETED, None)
+            dead_keys = [
+                k for k in ("connection_id", "server_auth_connection_id")
+                if isinstance(data.get(k), str) and data[k].strip()
+                and not _connection_exists(db, data[k].strip())
+            ]
+            if marker is not None or dead_keys:
+                cleared = {k: data.pop(k) for k in dead_keys}
+                server.env_config = _encrypt_env_dict(data)
+                server.updated_by = user_id
+                db.commit()
+                _log_audit(
+                    db, user_id=user_id,
+                    action="mcp_server.binding_lost_acknowledged",
+                    server=server, request=request,
+                    details={"deleted_connection": marker, "cleared_bindings": cleared},
+                )
+    return to_detail(server)
 
 
 def _set_status(

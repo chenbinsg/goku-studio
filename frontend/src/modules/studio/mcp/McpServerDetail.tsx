@@ -144,8 +144,23 @@ const ConnectionTab: React.FC<{
   detail: ServerDetail
   onTest: () => void
   onEdit: () => void
-}> = ({ detail, onTest, onEdit }) => {
+  onReload: () => void
+}> = ({ detail, onTest, onEdit, onReload }) => {
   const { t } = useTranslation()
+  const [acking, setAcking] = useState(false)
+  const bindingLost = detail.secrets.env_config_binding_lost
+  const acknowledgeBindingLost = async () => {
+    setAcking(true)
+    try {
+      await api.post(`/mcp-servers/${detail.id}/acknowledge-binding-lost`)
+      message.success(t('mcp_srv_binding_lost_ack_ok'))
+      onReload()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || t('mcp_srv_binding_lost_ack_failed'))
+    } finally {
+      setAcking(false)
+    }
+  }
   const connectionCode = detail.secrets.env_config_connection_id
   const serverAuthCode = detail.secrets.env_config_server_auth_connection_id
   const isStdio = detail.connection_type === 'stdio'
@@ -171,6 +186,20 @@ const ConnectionTab: React.FC<{
         </Space>
       }
     >
+      {bindingLost && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={t('mcp_srv_binding_lost_title')}
+          description={t('mcp_srv_binding_lost_desc', { code: bindingLost.code || bindingLost.name || '' })}
+          action={
+            <Button size="small" loading={acking} onClick={acknowledgeBindingLost}>
+              {t('mcp_srv_binding_lost_ack')}
+            </Button>
+          }
+        />
+      )}
       {missingRequiredBinding && (
         <Alert
           type="error"
@@ -1828,7 +1857,7 @@ const McpServerDetail: React.FC = () => {
           { key: 'basic', label: t('mcp_detail_tab_basic'), children: <BasicInfoTab detail={detail} /> },
           {
             key: 'connection', label: t('mcp_detail_tab_connection'),
-            children: <ConnectionTab detail={detail} onTest={onTest} onEdit={() => setEditOpen(true)} />,
+            children: <ConnectionTab detail={detail} onTest={onTest} onEdit={() => setEditOpen(true)} onReload={reloadDetail} />,
           },
           {
             key: 'capabilities', label: t('mcp_detail_tab_capabilities'),

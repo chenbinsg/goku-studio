@@ -104,6 +104,16 @@ export interface MCPServerDetail {
     // can pre-select the two dropdowns without exposing the full plaintext.
     env_config_connection_id?: string | null
     env_config_server_auth_connection_id?: string | null
+    // Set when this server's bound external connection was DELETED (the
+    // binding was auto-removed). Carries {code, name, keys, at, by}; the
+    // detail page shows a prompt with an acknowledge button that clears it.
+    env_config_binding_lost?: {
+      code?: string
+      name?: string
+      keys?: string[]
+      at?: string
+      by?: string | null
+    } | null
   }
   status: 'enabled' | 'disabled'
   health_status: 'normal' | 'abnormal' | 'unchecked'
@@ -419,7 +429,15 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
       let envForSave: string | undefined = values.env_config
       const code = (values.connection_code || '').trim()
       const authCode = (values.server_auth_connection_code || '').trim()
-      if (mode === 'edit' && envForSave === '' && !code && !authCode) {
+      // Was a binding present before this edit? If the user cleared it, that's
+      // an intentional removal — NOT a no-op — and must be expressed to the
+      // backend (otherwise a lone binding can never be cleared, and a save
+      // silently keeps the stale/deleted connection).
+      const origCode = mode === 'edit' ? (detail?.secrets?.env_config_connection_id || '') : ''
+      const origAuth = mode === 'edit' ? (detail?.secrets?.env_config_server_auth_connection_id || '') : ''
+      const clearedBinding = mode === 'edit' && !!(origCode || origAuth) && !code && !authCode
+      let clearEnvConfig = false
+      if (mode === 'edit' && envForSave === '' && !code && !authCode && !clearedBinding) {
         // Pure no-op edit: leave env_config untouched on the server side.
         envForSave = undefined
       } else {
@@ -446,10 +464,19 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
         } else {
           delete envDict.server_auth_connection_id
         }
-        envForSave = Object.keys(envDict).length > 0 ? JSON.stringify(envDict) : undefined
+        if (Object.keys(envDict).length > 0) {
+          envForSave = JSON.stringify(envDict)
+        } else {
+          // env is now empty. If we got here by clearing the binding, the
+          // env_config must be actively wiped (clear_env_config) — an absent
+          // env_config means "keep stored", which would leave the binding.
+          envForSave = undefined
+          if (clearedBinding) clearEnvConfig = true
+        }
       }
 
       const base: any = {
+        ...(clearEnvConfig ? { clear_env_config: true } : {}),
         name: values.name,
         service_category: values.service_category,
         description: values.description,

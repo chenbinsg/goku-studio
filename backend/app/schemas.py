@@ -774,6 +774,11 @@ class MCPServerSecretsView(BaseModel):
     env_config_server_auth_connection_id: str | None = (
         None  # external connection code bound via env_config.server_auth_connection_id (url type); supplies the Authorization header Goku uses to call this MCP server's HTTP endpoint
     )
+    # Set when this server's bound external connection was DELETED (marker
+    # __connection_deleted__ in env_config). Carries {code, name, keys, at,
+    # by}; the UI shows a "binding lost" prompt with an acknowledge button
+    # that clears it. None = no pending prompt.
+    env_config_binding_lost: dict | None = None
 
 
 class MCPServerListItem(BaseModel):
