@@ -12,7 +12,7 @@ from app.routers.studio import (
     agents, workflows, tools, knowledge, memory, auto_skills,
     plugins, connectors, connector_config, docs, uploads,
     ai_tools_mcp, external_memory, mcp_servers,
-    mcp_external_connections, instructions, auth,
+    mcp_external_connections, instructions, auth, models,
 )
 
 router = APIRouter()
@@ -36,3 +36,4 @@ router.include_router(external_memory.router)
 router.include_router(mcp_servers.router)
 router.include_router(mcp_external_connections.router)
 router.include_router(instructions.router)
+router.include_router(models.router)

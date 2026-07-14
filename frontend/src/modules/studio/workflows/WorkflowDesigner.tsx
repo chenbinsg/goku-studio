@@ -55,7 +55,7 @@ import {
   HolderOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { workflowApi, toolApi, agentApi } from '@/api'
+import { workflowApi, toolApi, agentApi, modelApi } from '@/api'
 import { useTranslation } from 'react-i18next'
 
 const { Text } = Typography
@@ -437,6 +437,7 @@ const WorkflowDesignerInner: React.FC = () => {
   const nodeIdCounter  = useRef(100)
   const savedWorkflowId = useRef<string | null>(workflowId)
   const [availableTools, setAvailableTools] = useState<{ name: string; description: string }[]>([])
+  const [availableModels, setAvailableModels] = useState<string[]>([])
   const [executionId,     setExecutionId]     = useState<string | null>(null)
   const [executionStatus, setExecutionStatus] = useState<string | null>(null)
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, string>>({})
@@ -457,6 +458,14 @@ const WorkflowDesignerInner: React.FC = () => {
     agentApi.list({ size: 200, is_active: true }).then((res: any) => {
       const items = res?.items || []
       setAvailableAgents(items.map((a: any) => ({ id: a.id, name: a.name })))
+    }).catch(() => {})
+  }, [])
+
+  // Pull the routable model list from Goku-Router (via studio backend proxy) so
+  // the node model dropdown reflects the live catalog instead of a hardcoded list.
+  useEffect(() => {
+    modelApi.list().then((res: any) => {
+      setAvailableModels(Array.isArray(res?.models) ? res.models : [])
     }).catch(() => {})
   }, [])
 
@@ -692,14 +701,11 @@ const WorkflowDesignerInner: React.FC = () => {
               />
             </Form.Item>
             <Form.Item label={t('workflow_designer_model')} name="model">
-              <Select options={[
-                { label: 'Claude 3.5 Sonnet', value: 'claude-3-5-sonnet' },
-                { label: 'Claude 3 Opus',     value: 'claude-3-opus' },
-                { label: 'Claude 3 Haiku',    value: 'claude-3-haiku' },
-                { label: 'GPT-4o',            value: 'gpt-4o' },
-                { label: 'GPT-4o Mini',       value: 'gpt-4o-mini' },
-                { label: 'Gemini 1.5 Pro',    value: 'gemini-1.5-pro' },
-              ]} />
+              <Select
+                showSearch
+                placeholder={availableModels.length ? undefined : 'Goku-Router 无可用模型'}
+                options={availableModels.map((m) => ({ label: m, value: m }))}
+              />
             </Form.Item>
             <Form.Item label={t('workflow_designer_timeout')} name="timeout">
               <InputNumber min={1} max={86400} style={{ width: '100%' }} />
