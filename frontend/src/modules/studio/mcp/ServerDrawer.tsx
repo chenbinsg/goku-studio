@@ -49,6 +49,10 @@ export const STATUS_COLORS: Record<string, string> = {
 }
 export const HEALTH_COLORS: Record<string, string> = {
   normal: 'success', abnormal: 'error', unchecked: 'default',
+  // Amber middle state: MCP server is up + speaks the protocol, but the
+  // backing datasource wasn't verified (no readiness_check / no readable
+  // resource). Not a green "usable", not a red "broken".
+  unverified: 'warning',
 }
 export const CAPABILITY_STATUS_COLORS: Record<string, string> = {
   active: 'success', inactive: 'default',
@@ -116,7 +120,7 @@ export interface MCPServerDetail {
     } | null
   }
   status: 'enabled' | 'disabled'
-  health_status: 'normal' | 'abnormal' | 'unchecked'
+  health_status: 'normal' | 'unverified' | 'abnormal' | 'unchecked'
   last_checked_at?: string | null
   last_response_time?: number | null
   last_sync_status?: string | null
@@ -137,6 +141,9 @@ export interface MCPServerDetail {
   high_risk_confirm_required: boolean
   rate_limit_config?: Record<string, any>
   circuit_breaker_config?: Record<string, any>
+  // Declarative read-only datasource readiness probe (L3 of the connection
+  // test). null/absent = auto (amber unless a resource is readable).
+  readiness_check?: Record<string, any> | null
   audit_enabled: boolean
   created_by?: string
   created_at: string
@@ -362,6 +369,7 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
         server_auth_connection_code: detail.secrets.env_config_server_auth_connection_id || undefined,
         auto_sync_enabled: detail.auto_sync_enabled,
         sync_frequency: detail.sync_frequency || 'manual',
+        readiness_check: detail.readiness_check ? JSON.stringify(detail.readiness_check, null, 2) : '',
         sync_scope: JSON.stringify(detail.sync_scope || {}),
         conflict_strategy: detail.conflict_strategy || 'overwrite',
         offline_strategy: detail.offline_strategy || 'mark_inactive',
@@ -420,6 +428,21 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
       const circuit_breaker_config = values.circuit_breaker_config
         ? (() => { try { return JSON.parse(values.circuit_breaker_config) } catch { return undefined } })()
         : undefined
+      // readiness_check: empty → clear (null on edit, omit on create); invalid
+      // JSON → hard error (don't silently drop a datasource-probe config).
+      let readiness_check: any = undefined
+      const rcRaw = (values.readiness_check || '').trim()
+      if (rcRaw === '') {
+        readiness_check = mode === 'edit' ? null : undefined
+      } else {
+        try {
+          readiness_check = JSON.parse(rcRaw)
+        } catch {
+          message.error(t('mcp_server_drawer_msg_readiness_json_error'))
+          setSaving(false)
+          return
+        }
+      }
 
       // Merge BOTH connection dropdowns into env_config:
       //   connection_id              — external system the server CALLS
@@ -494,6 +517,7 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
         conflict_strategy: values.conflict_strategy,
         offline_strategy: values.offline_strategy,
         circuit_breaker_config,
+        readiness_check,
         audit_enabled: values.audit_enabled,
       }
       const payload = buildSecretFields(base, mode === 'edit')
@@ -800,6 +824,22 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
                 })()}
               >
                 <Input.TextArea rows={3} placeholder={t('mcp_server_drawer_ph_env_config')} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Divider orientation="left" plain>{t('mcp_server_drawer_section_readiness')}</Divider>
+          <Row gutter={12}>
+            <Col span={24}>
+              <Form.Item
+                label={t('mcp_server_drawer_field_readiness')}
+                name="readiness_check"
+                extra={t('mcp_server_drawer_extra_readiness')}
+              >
+                <Input.TextArea
+                  rows={3}
+                  placeholder={'{"mode":"tool","tool":"mysql_query","arguments":{"sql":"SELECT 1"}}'}
+                />
               </Form.Item>
             </Col>
           </Row>

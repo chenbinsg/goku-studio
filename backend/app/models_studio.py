@@ -259,6 +259,13 @@ class MCPServer(Base):
     high_risk_confirm_required = Column(Boolean,    default=True,  server_default="1", nullable=False)
     rate_limit_config         = Column(JSON,        nullable=True)
     circuit_breaker_config    = Column(JSON,        nullable=True)
+    # Declarative read-only "is the datasource usable" probe, run as L3 of the
+    # connection test (mirrors Airbyte/Zapier connector `check`). Shape:
+    #   {"mode":"tool","tool":"<name>","arguments":{...}}  e.g. SELECT 1
+    #   {"mode":"resource","resource":"<uri>"}             (uri optional)
+    #   {"mode":"none"}                                    opt out → amber
+    # Absent → auto (read a resource if any; else amber "unverified").
+    readiness_check           = Column(JSON,        nullable=True)
     audit_enabled             = Column(Boolean,     default=True,  server_default="1", nullable=False)
     created_by                = Column(String(36),  nullable=True)
     created_at                = Column(DateTime,    default=datetime.utcnow, nullable=False)

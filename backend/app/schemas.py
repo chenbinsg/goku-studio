@@ -684,6 +684,9 @@ class MCPServerCreate(BaseModel):
     high_risk_confirm_required: bool = True
     rate_limit_config: dict[str, Any] | None = None
     circuit_breaker_config: dict[str, Any] | None = None
+    # Declarative read-only datasource readiness probe run as L3 of the
+    # connection test. See MCPServer.readiness_check for the shape.
+    readiness_check: dict[str, Any] | None = None
     audit_enabled: bool = True
 
     @field_validator("code")
@@ -747,6 +750,9 @@ class MCPServerUpdate(BaseModel):
     high_risk_confirm_required: bool | None = None
     rate_limit_config: dict[str, Any] | None = None
     circuit_breaker_config: dict[str, Any] | None = None
+    # Declarative read-only datasource readiness probe run as L3 of the
+    # connection test. See MCPServer.readiness_check for the shape.
+    readiness_check: dict[str, Any] | None = None
     audit_enabled: bool | None = None
 
 
@@ -872,6 +878,9 @@ class MCPServerDetail(BaseModel):
     high_risk_confirm_required: bool
     rate_limit_config: dict[str, Any] | None = None
     circuit_breaker_config: dict[str, Any] | None = None
+    # Declarative read-only datasource readiness probe run as L3 of the
+    # connection test. See MCPServer.readiness_check for the shape.
+    readiness_check: dict[str, Any] | None = None
     audit_enabled: bool
 
     created_by: str | None = None

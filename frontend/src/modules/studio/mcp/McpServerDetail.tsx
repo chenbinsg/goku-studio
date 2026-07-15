@@ -24,7 +24,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import {
   Card, Descriptions, Tag, Space, Button, Typography, Tabs, Table, Modal,
   Form, Input, Select, message, Row, Col, Statistic, DatePicker, Empty,
-  Spin, Result, Alert, InputNumber, Switch, Drawer, Collapse,
+  Spin, Result, Alert, InputNumber, Switch, Drawer, Collapse, Tooltip,
 } from 'antd'
 import {
   ThunderboltOutlined, SyncOutlined, EditOutlined, PoweroffOutlined,
@@ -56,7 +56,13 @@ function statusTag(status?: string) {
 
 function healthTag(status?: string) {
   if (!status) return <Tag>-</Tag>
-  return <Tag color={HEALTH_COLORS[status] || 'default'}>{mcpHealthText(status)}</Tag>
+  const tag = <Tag color={HEALTH_COLORS[status] || 'default'}>{mcpHealthText(status)}</Tag>
+  // Amber "unverified" is the subtle one — explain what it means and how to
+  // upgrade it to a true green (configure a readiness check).
+  if (status === 'unverified') {
+    return <Tooltip title={i18n.t('mcp_health_unverified_hint')}>{tag}</Tooltip>
+  }
+  return tag
 }
 
 function capabilityStatusTag(status?: string) {
@@ -1701,9 +1707,13 @@ const McpServerDetail: React.FC = () => {
       const res = await api.post<any>(`/mcp-servers/${detail.id}/test`, {})
       hide()
       if (res.status === 'normal') {
+        // Green = datasource actually reached + auth OK (end-to-end).
         message.success(t('mcp_detail_msg_test_ok', {
           ms: res.response_time_ms, count: res.capabilities_discovered,
         }))
+      } else if (res.status === 'unverified') {
+        // Amber = MCP up, but datasource not verified. Not usable-confirmed.
+        message.warning(t('mcp_detail_msg_test_unverified'))
       } else {
         message.error(t('mcp_detail_msg_test_fail', {
           type: res.error_type || '', message: res.error_message || '',
@@ -1717,6 +1727,18 @@ const McpServerDetail: React.FC = () => {
     }
   }
 
+  // Turn the backend's compact per-bucket error string (e.g.
+  // "capabilities: Connection closed; resources") into something readable:
+  // localize the known bucket names, drop empties. The raw error text (often
+  // from the MCP library) is kept as-is — we only friendly-up the labels.
+  const prettifySyncError = (msg?: string | null): string => {
+    if (!msg) return ''
+    return msg
+      .replace(/(^|; )capabilities(:|\b)/g, `$1${t('mcp_sync_bucket_capabilities')}$2`)
+      .replace(/(^|; )resources(:|\b)/g, `$1${t('mcp_sync_bucket_resources')}$2`)
+      .replace(/(^|; )prompts(:|\b)/g, `$1${t('mcp_sync_bucket_prompts')}$2`)
+  }
+
   const onSync = async () => {
     if (!detail) return
     const hide = message.loading(t('mcp_detail_msg_syncing', { name: detail.name }), 0)
@@ -1724,10 +1746,15 @@ const McpServerDetail: React.FC = () => {
       const res = await api.post<any>(`/mcp-servers/${detail.id}/sync`, {})
       hide()
       const caps = res.capabilities || {}
-      message.success(t('mcp_detail_msg_sync_done', {
-        status: res.status,
-        added: caps.added || 0, updated: caps.updated || 0, removed: caps.removed || 0,
-      }))
+      const counts = { added: caps.added || 0, updated: caps.updated || 0, removed: caps.removed || 0 }
+      // Friendly, status-specific feedback — never surface the raw enum.
+      if (res.status === 'success') {
+        message.success(t('mcp_detail_msg_sync_ok', counts))
+      } else if (res.status === 'partial_success') {
+        message.warning(t('mcp_detail_msg_sync_partial', counts))
+      } else {
+        message.error(t('mcp_detail_msg_sync_failed'))
+      }
       reloadDetail()
       setCapReloadKey(k => k + 1)  // re-fetch the 能力 Tab table
     } catch (e: any) {
@@ -1813,15 +1840,27 @@ const McpServerDetail: React.FC = () => {
             partial failures (e.g. capability bucket succeeded but resources
             bucket hit a network error). Servers that simply don't implement
             resources/prompts come back as 'success'. */}
-        {detail.last_sync_status === 'partial_success' && detail.last_sync_error_message && (
+        {detail.last_sync_status === 'partial_success' && (
           <Alert
             style={{ marginTop: 12 }}
             type="warning"
             showIcon
             message={t('mcp_detail_alert_sync_partial_title')}
             description={
-              <Space direction="vertical" size={2}>
-                <Text>{detail.last_sync_error_message}</Text>
+              <Space direction="vertical" size={4}>
+                <Text>{t('mcp_detail_alert_sync_partial_desc')}</Text>
+                {detail.last_sync_error_message && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('mcp_detail_alert_sync_detail_label')}
+                    {prettifySyncError(detail.last_sync_error_message)}
+                  </Text>
+                )}
+              </Space>
+            }
+            action={
+              <Space direction="vertical" size={4}>
+                <Button size="small" type="primary" onClick={onSync}>{t('mcp_detail_alert_sync_retry')}</Button>
+                <Button size="small" onClick={onTest}>{t('mcp_detail_header_test')}</Button>
               </Space>
             }
           />
@@ -1832,8 +1871,23 @@ const McpServerDetail: React.FC = () => {
             type="error"
             showIcon
             message={t('mcp_detail_alert_sync_failed_title')}
-            description={detail.last_sync_error_message || t('mcp_detail_alert_sync_failed_desc')}
-            action={<Button size="small" onClick={onTest}>{t('mcp_detail_header_test')}</Button>}
+            description={
+              <Space direction="vertical" size={4}>
+                <Text>{t('mcp_detail_alert_sync_failed_desc')}</Text>
+                {detail.last_sync_error_message && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('mcp_detail_alert_sync_detail_label')}
+                    {prettifySyncError(detail.last_sync_error_message)}
+                  </Text>
+                )}
+              </Space>
+            }
+            action={
+              <Space direction="vertical" size={4}>
+                <Button size="small" type="primary" onClick={onSync}>{t('mcp_detail_alert_sync_retry')}</Button>
+                <Button size="small" onClick={onTest}>{t('mcp_detail_header_test')}</Button>
+              </Space>
+            }
           />
         )}
         {detail.health_status === 'unchecked' && (

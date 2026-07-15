@@ -226,6 +226,8 @@ const McpServerList: React.FC = () => {
           ms: res.response_time_ms,
           count: res.capabilities_discovered,
         }))
+      } else if (res.status === 'unverified') {
+        message.warning(t('mcp_server_list_msg_test_unverified'))
       } else {
         message.error(t('mcp_server_list_msg_test_fail', {
           type: res.error_type || '',
@@ -245,12 +247,15 @@ const McpServerList: React.FC = () => {
       const res = await api.post<any>(`/mcp-servers/${server.id}/sync`, {})
       hide()
       const caps = res.capabilities || {}
-      message.success(t('mcp_server_list_msg_sync_done', {
-        status: res.status,
-        added: caps.added || 0,
-        updated: caps.updated || 0,
-        removed: caps.removed || 0,
-      }))
+      const counts = { added: caps.added || 0, updated: caps.updated || 0, removed: caps.removed || 0 }
+      // Friendly, status-specific feedback — never surface the raw enum.
+      if (res.status === 'success') {
+        message.success(t('mcp_server_list_msg_sync_ok', counts))
+      } else if (res.status === 'partial_success') {
+        message.warning(t('mcp_server_list_msg_sync_partial', counts))
+      } else {
+        message.error(t('mcp_server_list_msg_sync_failed'))
+      }
       reloadAll()
     } catch (e: any) {
       hide()
