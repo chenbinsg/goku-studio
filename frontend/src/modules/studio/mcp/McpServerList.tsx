@@ -20,6 +20,7 @@ import { useTranslation } from 'react-i18next'
 import { api } from '@/api'
 import ServerDrawer, {
   SERVICE_CATEGORY_VALUES, STATUS_COLORS, HEALTH_COLORS, fmt,
+  mcpTestFailText,
   type MCPServerDetail,
 } from './ServerDrawer'
 import { downloadExport, McpImportButton, ExportServersModal } from './mcpTransfer'
@@ -230,9 +231,8 @@ const McpServerList: React.FC = () => {
         message.warning(t('mcp_server_list_msg_test_unverified'))
       } else {
         message.error(t('mcp_server_list_msg_test_fail', {
-          type: res.error_type || '',
-          message: res.error_message || '',
-        }).trim())
+          reason: mcpTestFailText(res.error_type, res.error_message),
+        }))
       }
       reloadAll()
     } catch (e: any) {

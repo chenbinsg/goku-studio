@@ -66,6 +66,28 @@ export const mcpHealthText = (h?: string): string =>
   h ? i18n.t(`mcp_health_${h}`, { defaultValue: h }) : '-'
 export const mcpCapabilityStatusText = (s?: string): string =>
   s ? i18n.t(`mcp_capability_status_${s}`, { defaultValue: s }) : '-'
+
+// Raw errors that add nothing for a user once the friendly reason is shown
+// (the reason already says "unreachable / auth failed"). Dropped from the
+// toast so we don't surface bare "McpError: Connection closed".
+const _TEST_ERR_NOISE = new Set(['connection closed', 'connection reset', ''])
+// Turn a probe failure (error_type + raw message) into a friendly, actionable
+// line: a localized reason for the error class, plus the raw detail ONLY when
+// it actually adds information (e.g. "Access denied for user ...").
+export const mcpTestFailText = (errType?: string, rawMsg?: string): string => {
+  // Config-diagnosis errors (connection_not_bound / _disabled / _deleted /
+  // _bound_fail) already carry a specific, actionable message from the
+  // backend — it names the connection and says what to do — so show it as-is.
+  if (errType && errType.startsWith('connection_') && rawMsg) {
+    return rawMsg
+  }
+  const reason = i18n.t(`mcp_err_reason_${errType || 'unknown'}`, {
+    defaultValue: i18n.t('mcp_err_reason_unknown'),
+  })
+  let detail = (rawMsg || '').replace(/^\s*(McpError|Error|Exception)\s*:\s*/i, '').trim()
+  if (_TEST_ERR_NOISE.has(detail.toLowerCase())) detail = ''
+  return detail ? `${reason}（${detail}）` : reason
+}
 export const mcpCategoryText = (c?: string): string =>
   c ? i18n.t(`mcp_category_${c}`, { defaultValue: c }) : '-'
 

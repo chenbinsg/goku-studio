@@ -37,6 +37,7 @@ import { api } from '@/api'
 import ServerDrawer, {
   STATUS_COLORS, HEALTH_COLORS, CAPABILITY_STATUS_COLORS,
   mcpStatusText, mcpHealthText, mcpCapabilityStatusText, mcpCategoryText, fmt,
+  mcpTestFailText,
   type MCPServerDetail as ServerDetail,
 } from './ServerDrawer'
 
@@ -596,7 +597,7 @@ const CapabilitiesTab: React.FC<{
               </Descriptions.Item>
               <Descriptions.Item label={t('mcp_detail_invoke_duration')}>{invokeResult.response_time_ms} ms</Descriptions.Item>
               <Descriptions.Item label={t('mcp_detail_invoke_output')}>
-                <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
+                <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   {invokeResult.output_summary || '-'}
                 </pre>
               </Descriptions.Item>
@@ -1017,21 +1018,29 @@ const CapabilityManageDrawer: React.FC<{
       key: 'detail',
       label: t('mcp_detail_mgr_section_detail'),
       children: capability ? (
-        <Descriptions column={1} size="small" bordered>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_name')}>{capability.capability_name}</Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_description')}>{capability.description || '-'}</Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_status')}>{capabilityStatusTag(capability.status)}</Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_input_schema')}>
-            <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
-              {JSON.stringify((capDetail as any)?.input_schema ?? capability.input_schema ?? null, null, 2)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('mcp_ovr_effective_schema')}>
-            <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
-              {JSON.stringify((capDetail as any)?.effective_input_schema ?? capability.input_schema, null, 2)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('mcp_ovr_editor_label')}>
-            <div>
-              <Space wrap style={{ marginBottom: 6 }}>
+        <>
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_name')}>{capability.capability_name}</Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_description')}>{capability.description || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_status')}>{capabilityStatusTag(capability.status)}</Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_input_schema')}>
+              <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {JSON.stringify((capDetail as any)?.input_schema ?? capability.input_schema ?? null, null, 2)}</pre>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('mcp_ovr_effective_schema')}>
+              <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {JSON.stringify((capDetail as any)?.effective_input_schema ?? capability.input_schema, null, 2)}</pre>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_last_synced')}>{fmt(capability.last_synced_at)}</Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_last_called')}>{fmt(capability.last_called_at)}</Descriptions.Item>
+          </Descriptions>
+
+          {/* Schema-override editor — its own full-width block (not stuffed in
+              a Descriptions table cell, which forced the too-wide layout). */}
+          <div style={{ marginTop: 16 }}>
+            <Text strong>{t('mcp_ovr_editor_label')}</Text>
+            <div style={{ margin: '8px 0' }}>
+              <Space wrap>
                 {Object.entries(((capDetail as any)?.schema_overrides?.params) || {}).map(([k, v]: [string, any]) => (
                   <Tag key={k} color={v.status === 'active' ? 'green' : 'orange'}>
                     {k}: {v.status === 'active' ? t('mcp_ovr_status_active')
@@ -1040,24 +1049,22 @@ const CapabilityManageDrawer: React.FC<{
                   </Tag>
                 ))}
               </Space>
-              <Input.TextArea
-                rows={5}
-                value={ovrText}
-                onChange={(e) => setOvrText(e.target.value)}
-                placeholder={t('mcp_ovr_placeholder')}
-                style={{ fontFamily: 'monospace', fontSize: 12 }}
-              />
-              <div style={{ marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_ovr_hint')}</Text>
-                <Button size="small" type="primary" loading={ovrSaving} onClick={saveOverrides}>
-                  {t('mcp_ovr_save')}
-                </Button>
-              </div>
             </div>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_last_synced')}>{fmt(capability.last_synced_at)}</Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_last_called')}>{fmt(capability.last_called_at)}</Descriptions.Item>
-        </Descriptions>
+            <Input.TextArea
+              rows={12}
+              value={ovrText}
+              onChange={(e) => setOvrText(e.target.value)}
+              placeholder={t('mcp_ovr_placeholder')}
+              style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowY: 'auto', resize: 'vertical' }}
+            />
+            <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button size="small" type="primary" loading={ovrSaving} onClick={saveOverrides}>
+                {t('mcp_ovr_save')}
+              </Button>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_ovr_hint')}</Text>
+            </div>
+          </div>
+        </>
       ) : null,
     },
     {
@@ -1716,8 +1723,8 @@ const McpServerDetail: React.FC = () => {
         message.warning(t('mcp_detail_msg_test_unverified'))
       } else {
         message.error(t('mcp_detail_msg_test_fail', {
-          type: res.error_type || '', message: res.error_message || '',
-        }).trim())
+          reason: mcpTestFailText(res.error_type, res.error_message),
+        }))
       }
       reloadDetail()
       setHealthReloadKey(k => k + 1)
