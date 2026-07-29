@@ -24,7 +24,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import {
   Card, Descriptions, Tag, Space, Button, Typography, Tabs, Table, Modal,
   Form, Input, Select, message, Row, Col, Statistic, DatePicker, Empty,
-  Spin, Result, Alert, InputNumber, Switch, Drawer, Collapse,
+  Spin, Result, Alert, InputNumber, Switch, Drawer, Collapse, Tooltip,
 } from 'antd'
 import {
   ThunderboltOutlined, SyncOutlined, EditOutlined, PoweroffOutlined,
@@ -37,6 +37,7 @@ import { api } from '@/api'
 import ServerDrawer, {
   STATUS_COLORS, HEALTH_COLORS, CAPABILITY_STATUS_COLORS,
   mcpStatusText, mcpHealthText, mcpCapabilityStatusText, mcpCategoryText, fmt,
+  mcpTestFailText,
   type MCPServerDetail as ServerDetail,
 } from './ServerDrawer'
 
@@ -56,7 +57,13 @@ function statusTag(status?: string) {
 
 function healthTag(status?: string) {
   if (!status) return <Tag>-</Tag>
-  return <Tag color={HEALTH_COLORS[status] || 'default'}>{mcpHealthText(status)}</Tag>
+  const tag = <Tag color={HEALTH_COLORS[status] || 'default'}>{mcpHealthText(status)}</Tag>
+  // Amber "unverified" is the subtle one — explain what it means and how to
+  // upgrade it to a true green (configure a readiness check).
+  if (status === 'unverified') {
+    return <Tooltip title={i18n.t('mcp_health_unverified_hint')}>{tag}</Tooltip>
+  }
+  return tag
 }
 
 function capabilityStatusTag(status?: string) {
@@ -144,8 +151,23 @@ const ConnectionTab: React.FC<{
   detail: ServerDetail
   onTest: () => void
   onEdit: () => void
-}> = ({ detail, onTest, onEdit }) => {
+  onReload: () => void
+}> = ({ detail, onTest, onEdit, onReload }) => {
   const { t } = useTranslation()
+  const [acking, setAcking] = useState(false)
+  const bindingLost = detail.secrets.env_config_binding_lost
+  const acknowledgeBindingLost = async () => {
+    setAcking(true)
+    try {
+      await api.post(`/mcp-servers/${detail.id}/acknowledge-binding-lost`)
+      message.success(t('mcp_srv_binding_lost_ack_ok'))
+      onReload()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || t('mcp_srv_binding_lost_ack_failed'))
+    } finally {
+      setAcking(false)
+    }
+  }
   const connectionCode = detail.secrets.env_config_connection_id
   const serverAuthCode = detail.secrets.env_config_server_auth_connection_id
   const isStdio = detail.connection_type === 'stdio'
@@ -171,6 +193,20 @@ const ConnectionTab: React.FC<{
         </Space>
       }
     >
+      {bindingLost && (
+        <Alert
+          type="warning"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message={t('mcp_srv_binding_lost_title')}
+          description={t('mcp_srv_binding_lost_desc', { code: bindingLost.code || bindingLost.name || '' })}
+          action={
+            <Button size="small" loading={acking} onClick={acknowledgeBindingLost}>
+              {t('mcp_srv_binding_lost_ack')}
+            </Button>
+          }
+        />
+      )}
       {missingRequiredBinding && (
         <Alert
           type="error"
@@ -299,6 +335,7 @@ interface MCPCapability {
   description?: string
   input_schema?: any
   output_schema?: any
+  input_params?: string[]
   status: 'active' | 'inactive'
   authorization_mode?: 'required' | 'public'
   quota_enabled?: boolean
@@ -307,6 +344,7 @@ interface MCPCapability {
   rate_limit?: number | null
   last_synced_at?: string | null
   last_called_at?: string | null
+  result_script?: string | null
 }
 
 interface BlacklistEntry {
@@ -415,11 +453,12 @@ const CapabilitiesTab: React.FC<{
         </div>
       ) },
     { title: t('mcp_detail_cap_col_status'), dataIndex: 'status', key: 'status', width: 80, render: capabilityStatusTag },
-    // schema 多数行只是 `-`,真有内容也是 truncated 一行,150px 够。
-    { title: t('mcp_detail_cap_col_input_schema'), dataIndex: 'input_schema', key: 'input_schema', width: 150, ellipsis: true,
-      render: (v: any) => <Text code style={{ whiteSpace: 'nowrap' }}>{jsonPreview(v)}</Text> },
-    { title: t('mcp_detail_cap_col_output_schema'), dataIndex: 'output_schema', key: 'output_schema', width: 150, ellipsis: true,
-      render: (v: any) => <Text code style={{ whiteSpace: 'nowrap' }}>{jsonPreview(v)}</Text> },
+    // 入参列显示参数名摘要(带 * 的为必填);完整 JSON Schema 在「管理」抽屉里。
+    // 出参列已移除:MCP 协议的工具发现基本不提供 outputSchema,该列永远为空。
+    { title: t('mcp_detail_cap_col_input_schema'), dataIndex: 'input_params', key: 'input_params', width: 200,
+      render: (v?: string[]) => (v && v.length > 0)
+        ? <Space size={4} wrap>{v.map((p) => <Tag key={p} style={{ marginRight: 0 }}>{p}</Tag>)}</Space>
+        : <Text type="secondary">-</Text> },
     {
       title: t('mcp_detail_cap_col_auth_mode'), dataIndex: 'authorization_mode', key: 'auth_mode', width: 100,
       render: (v?: string) => (v || 'required') === 'public'
@@ -559,7 +598,7 @@ const CapabilitiesTab: React.FC<{
               </Descriptions.Item>
               <Descriptions.Item label={t('mcp_detail_invoke_duration')}>{invokeResult.response_time_ms} ms</Descriptions.Item>
               <Descriptions.Item label={t('mcp_detail_invoke_output')}>
-                <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
+                <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                   {invokeResult.output_summary || '-'}
                 </pre>
               </Descriptions.Item>
@@ -686,6 +725,57 @@ const CapabilityManageDrawer: React.FC<{
   const [capSummary, setCapSummary] = useState<CapSummary | null>(null)
   const [loading, setLoading] = useState(false)
 
+  // ── 结果处理脚本(沙箱) ──
+  const [scriptValue, setScriptValue] = useState('')
+  const [scriptSaving, setScriptSaving] = useState(false)
+  useEffect(() => { setScriptValue(capability?.result_script || '') }, [capability])
+  const saveScript = useCallback(async () => {
+    if (!capId) return
+    setScriptSaving(true)
+    try {
+      await api.put(`/mcp-servers/${serverId}/capabilities/${capId}/result-script`, { script: scriptValue })
+      message.success('已保存')
+      onSaved()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '保存失败')
+    } finally { setScriptSaving(false) }
+  }, [capId, serverId, scriptValue, onSaved])
+
+  // 参数补丁(schema overrides):三层展示 + 编辑
+  const [capDetail, setCapDetail] = useState<MCPCapability | null>(null)
+  const [ovrText, setOvrText] = useState('')
+  const [ovrSaving, setOvrSaving] = useState(false)
+
+  const loadCapDetail = useCallback(async () => {
+    if (!capId) return
+    try {
+      const d = await api.get<MCPCapability & { schema_overrides?: any; effective_input_schema?: any }>(
+        `/mcp-servers/${serverId}/capabilities/${capId}`)
+      setCapDetail(d)
+      const params = (d as any).schema_overrides?.params || {}
+      const editable: Record<string, any> = {}
+      Object.entries(params).forEach(([k, v]: [string, any]) => {
+        editable[k] = { ...(v.description ? { description: v.description } : {}), ...(v.type ? { type: v.type } : {}) }
+      })
+      setOvrText(Object.keys(editable).length ? JSON.stringify(editable, null, 2) : '')
+    } catch { setCapDetail(null) }
+  }, [serverId, capId])
+
+  const saveOverrides = async () => {
+    let params: any = {}
+    if (ovrText.trim()) {
+      try { params = JSON.parse(ovrText) } catch { message.error(t('mcp_ovr_invalid_json')); return }
+    }
+    setOvrSaving(true)
+    try {
+      await api.put(`/mcp-servers/${serverId}/capabilities/${capId}/schema-overrides`, { params })
+      message.success(t('mcp_ovr_saved'))
+      await loadCapDetail()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail?.message || e?.response?.data?.detail || String(e))
+    } finally { setOvrSaving(false) }
+  }
+
   // authz create / edit modal
   const [formOpen, setFormOpen] = useState(false)
   const [formMode, setFormMode] = useState<'create' | 'edit'>('create')
@@ -703,6 +793,8 @@ const CapabilityManageDrawer: React.FC<{
     setAiTools((toolRes.tools || []).filter(t => !!t.id).map(t => ({ id: t.id as string, name: t.name })))
     setAgents((agentRes.items || []).map(a => ({ id: a.id, name: a.name })))
   }, [])
+
+  React.useEffect(() => { if (open) loadCapDetail() }, [open, loadCapDetail])
 
   const reload = useCallback(async () => {
     if (!capId) return
@@ -944,22 +1036,72 @@ const CapabilityManageDrawer: React.FC<{
       key: 'detail',
       label: t('mcp_detail_mgr_section_detail'),
       children: capability ? (
-        <Descriptions column={1} size="small" bordered>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_name')}>{capability.capability_name}</Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_description')}>{capability.description || '-'}</Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_status')}>{capabilityStatusTag(capability.status)}</Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_input_schema')}>
-            <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
-              {JSON.stringify(capability.input_schema, null, 2)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_output_schema')}>
-            <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto' }}>
-              {JSON.stringify(capability.output_schema, null, 2)}</pre>
-          </Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_last_synced')}>{fmt(capability.last_synced_at)}</Descriptions.Item>
-          <Descriptions.Item label={t('mcp_detail_mgr_detail_last_called')}>{fmt(capability.last_called_at)}</Descriptions.Item>
-        </Descriptions>
+        <>
+          <Descriptions column={1} size="small" bordered>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_name')}>{capability.capability_name}</Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_description')}>{capability.description || '-'}</Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_status')}>{capabilityStatusTag(capability.status)}</Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_input_schema')}>
+              <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {JSON.stringify((capDetail as any)?.input_schema ?? capability.input_schema ?? null, null, 2)}</pre>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('mcp_ovr_effective_schema')}>
+              <pre style={{ margin: 0, fontSize: 12, maxHeight: 200, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+                {JSON.stringify((capDetail as any)?.effective_input_schema ?? capability.input_schema, null, 2)}</pre>
+            </Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_last_synced')}>{fmt(capability.last_synced_at)}</Descriptions.Item>
+            <Descriptions.Item label={t('mcp_detail_mgr_detail_last_called')}>{fmt(capability.last_called_at)}</Descriptions.Item>
+          </Descriptions>
+
+          {/* Schema-override editor — its own full-width block (not stuffed in
+              a Descriptions table cell, which forced the too-wide layout). */}
+          <div style={{ marginTop: 16 }}>
+            <Text strong>{t('mcp_ovr_editor_label')}</Text>
+            <div style={{ margin: '8px 0' }}>
+              <Space wrap>
+                {Object.entries(((capDetail as any)?.schema_overrides?.params) || {}).map(([k, v]: [string, any]) => (
+                  <Tag key={k} color={v.status === 'active' ? 'green' : 'orange'}>
+                    {k}: {v.status === 'active' ? t('mcp_ovr_status_active')
+                      : v.status === 'stale_param_missing' ? t('mcp_ovr_status_param_missing')
+                      : t('mcp_ovr_status_upstream_changed')}
+                  </Tag>
+                ))}
+              </Space>
+            </div>
+            <Input.TextArea
+              rows={12}
+              value={ovrText}
+              onChange={(e) => setOvrText(e.target.value)}
+              placeholder={t('mcp_ovr_placeholder')}
+              style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word', overflowY: 'auto', resize: 'vertical' }}
+            />
+            <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button size="small" type="primary" loading={ovrSaving} onClick={saveOverrides}>
+                {t('mcp_ovr_save')}
+              </Button>
+              <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_ovr_hint')}</Text>
+            </div>
+          </div>
+        </>
       ) : null,
+    },
+    {
+      key: 'script',
+      label: '结果处理脚本（沙箱）',
+      children: (
+        <div>
+          <Input.TextArea
+            value={scriptValue}
+            onChange={e => setScriptValue(e.target.value)}
+            rows={14}
+            style={{ fontFamily: 'monospace', fontSize: 12 }}
+            placeholder={'def process(result):\n    # 处理该能力的原始返回(dict)，返回处理后的 result\n    # 沙箱执行：禁 import（json 已内置）；留空=不处理\n    return result'}
+          />
+          <div style={{ marginTop: 8, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            <Button size="small" type="primary" loading={scriptSaving} onClick={saveScript}>保存脚本</Button>
+          </div>
+        </div>
+      ),
     },
     {
       key: 'mode',
@@ -1081,7 +1223,7 @@ const CapabilityManageDrawer: React.FC<{
       destroyOnClose
     >
       <Spin spinning={loading}>
-        <Collapse defaultActiveKey={['mode', 'quota', 'authz']} items={collapseItems} />
+        <Collapse defaultActiveKey={['detail', 'mode', 'quota', 'authz']} items={collapseItems} />
       </Spin>
 
       {/* 授权调用方 新增 / 编辑 */}
@@ -1608,13 +1750,17 @@ const McpServerDetail: React.FC = () => {
       const res = await api.post<any>(`/mcp-servers/${detail.id}/test`, {})
       hide()
       if (res.status === 'normal') {
+        // Green = datasource actually reached + auth OK (end-to-end).
         message.success(t('mcp_detail_msg_test_ok', {
           ms: res.response_time_ms, count: res.capabilities_discovered,
         }))
+      } else if (res.status === 'unverified') {
+        // Amber = MCP up, but datasource not verified. Not usable-confirmed.
+        message.warning(t('mcp_detail_msg_test_unverified'))
       } else {
         message.error(t('mcp_detail_msg_test_fail', {
-          type: res.error_type || '', message: res.error_message || '',
-        }).trim())
+          reason: mcpTestFailText(res.error_type, res.error_message),
+        }))
       }
       reloadDetail()
       setHealthReloadKey(k => k + 1)
@@ -1624,6 +1770,18 @@ const McpServerDetail: React.FC = () => {
     }
   }
 
+  // Turn the backend's compact per-bucket error string (e.g.
+  // "capabilities: Connection closed; resources") into something readable:
+  // localize the known bucket names, drop empties. The raw error text (often
+  // from the MCP library) is kept as-is — we only friendly-up the labels.
+  const prettifySyncError = (msg?: string | null): string => {
+    if (!msg) return ''
+    return msg
+      .replace(/(^|; )capabilities(:|\b)/g, `$1${t('mcp_sync_bucket_capabilities')}$2`)
+      .replace(/(^|; )resources(:|\b)/g, `$1${t('mcp_sync_bucket_resources')}$2`)
+      .replace(/(^|; )prompts(:|\b)/g, `$1${t('mcp_sync_bucket_prompts')}$2`)
+  }
+
   const onSync = async () => {
     if (!detail) return
     const hide = message.loading(t('mcp_detail_msg_syncing', { name: detail.name }), 0)
@@ -1631,10 +1789,15 @@ const McpServerDetail: React.FC = () => {
       const res = await api.post<any>(`/mcp-servers/${detail.id}/sync`, {})
       hide()
       const caps = res.capabilities || {}
-      message.success(t('mcp_detail_msg_sync_done', {
-        status: res.status,
-        added: caps.added || 0, updated: caps.updated || 0, removed: caps.removed || 0,
-      }))
+      const counts = { added: caps.added || 0, updated: caps.updated || 0, removed: caps.removed || 0 }
+      // Friendly, status-specific feedback — never surface the raw enum.
+      if (res.status === 'success') {
+        message.success(t('mcp_detail_msg_sync_ok', counts))
+      } else if (res.status === 'partial_success') {
+        message.warning(t('mcp_detail_msg_sync_partial', counts))
+      } else {
+        message.error(t('mcp_detail_msg_sync_failed'))
+      }
       reloadDetail()
       setCapReloadKey(k => k + 1)  // re-fetch the 能力 Tab table
     } catch (e: any) {
@@ -1720,15 +1883,27 @@ const McpServerDetail: React.FC = () => {
             partial failures (e.g. capability bucket succeeded but resources
             bucket hit a network error). Servers that simply don't implement
             resources/prompts come back as 'success'. */}
-        {detail.last_sync_status === 'partial_success' && detail.last_sync_error_message && (
+        {detail.last_sync_status === 'partial_success' && (
           <Alert
             style={{ marginTop: 12 }}
             type="warning"
             showIcon
             message={t('mcp_detail_alert_sync_partial_title')}
             description={
-              <Space direction="vertical" size={2}>
-                <Text>{detail.last_sync_error_message}</Text>
+              <Space direction="vertical" size={4}>
+                <Text>{t('mcp_detail_alert_sync_partial_desc')}</Text>
+                {detail.last_sync_error_message && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('mcp_detail_alert_sync_detail_label')}
+                    {prettifySyncError(detail.last_sync_error_message)}
+                  </Text>
+                )}
+              </Space>
+            }
+            action={
+              <Space direction="vertical" size={4}>
+                <Button size="small" type="primary" onClick={onSync}>{t('mcp_detail_alert_sync_retry')}</Button>
+                <Button size="small" onClick={onTest}>{t('mcp_detail_header_test')}</Button>
               </Space>
             }
           />
@@ -1739,8 +1914,23 @@ const McpServerDetail: React.FC = () => {
             type="error"
             showIcon
             message={t('mcp_detail_alert_sync_failed_title')}
-            description={detail.last_sync_error_message || t('mcp_detail_alert_sync_failed_desc')}
-            action={<Button size="small" onClick={onTest}>{t('mcp_detail_header_test')}</Button>}
+            description={
+              <Space direction="vertical" size={4}>
+                <Text>{t('mcp_detail_alert_sync_failed_desc')}</Text>
+                {detail.last_sync_error_message && (
+                  <Text type="secondary" style={{ fontSize: 12 }}>
+                    {t('mcp_detail_alert_sync_detail_label')}
+                    {prettifySyncError(detail.last_sync_error_message)}
+                  </Text>
+                )}
+              </Space>
+            }
+            action={
+              <Space direction="vertical" size={4}>
+                <Button size="small" type="primary" onClick={onSync}>{t('mcp_detail_alert_sync_retry')}</Button>
+                <Button size="small" onClick={onTest}>{t('mcp_detail_header_test')}</Button>
+              </Space>
+            }
           />
         )}
         {detail.health_status === 'unchecked' && (
@@ -1764,7 +1954,7 @@ const McpServerDetail: React.FC = () => {
           { key: 'basic', label: t('mcp_detail_tab_basic'), children: <BasicInfoTab detail={detail} /> },
           {
             key: 'connection', label: t('mcp_detail_tab_connection'),
-            children: <ConnectionTab detail={detail} onTest={onTest} onEdit={() => setEditOpen(true)} />,
+            children: <ConnectionTab detail={detail} onTest={onTest} onEdit={() => setEditOpen(true)} onReload={reloadDetail} />,
           },
           {
             key: 'capabilities', label: t('mcp_detail_tab_capabilities'),

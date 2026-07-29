@@ -16,6 +16,7 @@ stays the authorization boundary; a connection is only a config holder.
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -23,9 +24,10 @@ from typing import Any, Optional
 
 from fastapi import HTTPException, Request
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app import auth as _auth
-from app.models import MCPExternalConnection
+from app.models import MCPExternalConnection, MCPServer
 from app.services.encryption import (
     MASK_DISPLAY, SecretKeyMissing,
     decrypt_secret, encrypt_secret, looks_like_mask, mask_secret,
@@ -49,6 +51,18 @@ ERR_CONFIG_INVALID = "MCP_CONNECTION_CONFIG_INVALID"
 ERR_SECRET_KEY_MISSING = "MCP_CONNECTION_SECRET_KEY_MISSING"
 
 _AUDIT_TYPE = "mcp_external_connection"
+
+# env_config keys through which an MCP server binds an external connection.
+# The stored VALUE is the connection's ``code``.
+_BINDING_ENV_KEYS = ("connection_id", "server_auth_connection_id")
+
+# Internal env_config marker key written onto a server when its bound
+# external connection is deleted. Holds minimal display info + audit
+# breadcrumb ({code, name, at, by}); surfaced in the server detail so the
+# UI can prompt the operator, and cleared when they acknowledge. It is NOT
+# an operator-set env var — the runtime filters it out before spawning the
+# subprocess (see mcp_runtime._INTERNAL_ENV_MARKER_KEYS).
+MARKER_CONNECTION_DELETED = "__connection_deleted__"
 
 
 class MCPConnectionError(Exception):
@@ -352,19 +366,145 @@ def disable_connection(db, connection_id, *, user_id, request=None):
     return _set_enabled(db, connection_id, False, user_id=user_id, request=request)
 
 
+def _server_bound_connection_codes(server: MCPServer) -> dict[str, str]:
+    """Decrypt a server's env_config and return the binding-key → connection
+    code map for keys that actually carry a code. ``{}`` on empty/corrupt
+    env_config (best-effort — a borked row must not break usage scans)."""
+    if not server.env_config:
+        return {}
+    try:
+        plain = decrypt_secret(server.env_config)
+        data = json.loads(plain) if plain else None
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key in _BINDING_ENV_KEYS:
+        val = data.get(key)
+        if isinstance(val, str) and val.strip():
+            out[key] = val.strip()
+    return out
+
+
+def connection_usage(db: Session, connection_id: str) -> list[dict[str, Any]]:
+    """Which active MCP servers bind this connection (by its ``code``).
+
+    Returns ``[{"id", "code", "name", "binding_keys": [...]}]`` — drives the
+    pre-delete confirmation dialog so the operator sees who they'd unbind.
+    A server binding the code via both keys lists both.
+    """
+    conn = _get_or_404(db, connection_id)
+    servers = (
+        db.query(MCPServer)
+        .filter(MCPServer.deleted_at.is_(None))
+        .all()
+    )
+    used: list[dict[str, Any]] = []
+    for srv in servers:
+        bound = _server_bound_connection_codes(srv)
+        keys = [k for k, code in bound.items() if code == conn.code]
+        if keys:
+            used.append({
+                "id": srv.id, "code": srv.code, "name": srv.name,
+                "binding_keys": keys,
+            })
+    return used
+
+
+def _unbind_and_mark_server(
+    db: Session, server: MCPServer, conn: MCPExternalConnection,
+    *, user_id: Optional[str],
+) -> bool:
+    """Remove the binding key(s) referencing ``conn`` from this server's
+    env_config and stamp a ``__connection_deleted__`` marker so the UI can
+    prompt the operator. Returns True if the row was modified.
+
+    Mirrors the never-bound state: the binding key is DELETED (not blanked),
+    matching what a server with no connection looks like (env_config carries
+    no connection_id at all). The marker lives alongside the remaining env
+    keys and is filtered out at runtime.
+    """
+    if not server.env_config:
+        return False
+    try:
+        plain = decrypt_secret(server.env_config)
+        data = json.loads(plain) if plain else None
+    except Exception:
+        return False
+    if not isinstance(data, dict):
+        return False
+
+    removed = [
+        k for k in _BINDING_ENV_KEYS
+        if isinstance(data.get(k), str) and data[k].strip() == conn.code
+    ]
+    if not removed:
+        return False
+    for k in removed:
+        data.pop(k, None)
+    data[MARKER_CONNECTION_DELETED] = {
+        "code": conn.code,
+        "name": conn.name,
+        "keys": removed,
+        "at": datetime.utcnow().isoformat() + "Z",
+        "by": user_id,
+    }
+    server.env_config = encrypt_secret(json.dumps(data, ensure_ascii=False))
+    flag_modified(server, "env_config")
+    return True
+
+
 def soft_delete_connection(
     db: Session, connection_id: str, *, user_id: Optional[str],
-    request: Optional[Request] = None,
-) -> None:
-    """Soft-delete: set deleted_at. Runtime treats deleted as unusable."""
+    request: Optional[Request] = None, unbind_servers: bool = False,
+) -> list[dict[str, Any]]:
+    """Soft-delete a connection. Runtime treats deleted as unusable.
+
+    If MCP servers currently bind this connection, the caller must pass
+    ``unbind_servers=True`` (the UI collects an explicit checkbox first);
+    otherwise a 409 lists the affected servers so nothing is unbound
+    silently. On confirmed delete, each affected server's env_config has its
+    binding key(s) removed and a ``__connection_deleted__`` marker stamped,
+    and the whole cascade — who deleted, from where, which servers — is
+    audit-logged. Returns the affected servers (so the router can run a
+    connection test to refresh their health status).
+    """
     conn = _get_or_404(db, connection_id)
+    affected = connection_usage(db, connection_id)
+    if affected and not unbind_servers:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "MCP_CONNECTION_IN_USE",
+                "message": (
+                    f"外部连接「{conn.code}」正在被 {len(affected)} 个 MCP 服务使用,"
+                    "删除将解除这些服务的绑定,请确认后再删除。"
+                ),
+                "servers": affected,
+            },
+        )
+
     conn.deleted_at = datetime.utcnow()
     conn.updated_by = user_id
+    for srv_info in affected:
+        srv = db.query(MCPServer).filter(MCPServer.id == srv_info["id"]).first()
+        if srv is not None:
+            _unbind_and_mark_server(db, srv, conn, user_id=user_id)
     db.commit()
+
     _audit(
         db, user_id=user_id, action="mcp_external_connection.delete",
-        resource_id=conn.id, request=request, details={"code": conn.code},
+        resource_id=conn.id, request=request,
+        details={
+            "code": conn.code,
+            "unbound_servers": [
+                {"code": s["code"], "keys": s["binding_keys"]} for s in affected
+            ],
+            "unbound_server_count": len(affected),
+        },
     )
+    return affected
 
 
 # ─── runtime access ───────────────────────────────────────────────────

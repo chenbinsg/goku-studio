@@ -684,6 +684,9 @@ class MCPServerCreate(BaseModel):
     high_risk_confirm_required: bool = True
     rate_limit_config: dict[str, Any] | None = None
     circuit_breaker_config: dict[str, Any] | None = None
+    # Declarative read-only datasource readiness probe run as L3 of the
+    # connection test. See MCPServer.readiness_check for the shape.
+    readiness_check: dict[str, Any] | None = None
     audit_enabled: bool = True
 
     @field_validator("code")
@@ -747,6 +750,9 @@ class MCPServerUpdate(BaseModel):
     high_risk_confirm_required: bool | None = None
     rate_limit_config: dict[str, Any] | None = None
     circuit_breaker_config: dict[str, Any] | None = None
+    # Declarative read-only datasource readiness probe run as L3 of the
+    # connection test. See MCPServer.readiness_check for the shape.
+    readiness_check: dict[str, Any] | None = None
     audit_enabled: bool | None = None
 
 
@@ -774,6 +780,11 @@ class MCPServerSecretsView(BaseModel):
     env_config_server_auth_connection_id: str | None = (
         None  # external connection code bound via env_config.server_auth_connection_id (url type); supplies the Authorization header Goku uses to call this MCP server's HTTP endpoint
     )
+    # Set when this server's bound external connection was DELETED (marker
+    # __connection_deleted__ in env_config). Carries {code, name, keys, at,
+    # by}; the UI shows a "binding lost" prompt with an acknowledge button
+    # that clears it. None = no pending prompt.
+    env_config_binding_lost: dict | None = None
 
 
 class MCPServerListItem(BaseModel):
@@ -867,6 +878,9 @@ class MCPServerDetail(BaseModel):
     high_risk_confirm_required: bool
     rate_limit_config: dict[str, Any] | None = None
     circuit_breaker_config: dict[str, Any] | None = None
+    # Declarative read-only datasource readiness probe run as L3 of the
+    # connection test. See MCPServer.readiness_check for the shape.
+    readiness_check: dict[str, Any] | None = None
     audit_enabled: bool
 
     created_by: str | None = None
@@ -968,6 +982,9 @@ class MCPCapabilityListItem(BaseModel):
     server_id: str
     capability_name: str
     description: str | None = None
+    # Param-name summary derived from the MCP inputSchema (required params
+    # carry a ``*``). The full JSON Schema is detail-only.
+    input_params: list[str] = Field(default_factory=list)
     status: str
     authorization_mode: str = "required"
     # Total + rate quota — surfaced on the 能力 list so the quota editor
@@ -1178,7 +1195,22 @@ class MCPCapabilityDetail(MCPCapabilityListItem):
 
     input_schema: dict[str, Any] | None = None
     output_schema: dict[str, Any] | None = None
+    # Admin patch layer + the merged schema the LLM actually sees
+    # (see services/mcp_schema_overrides.py for the three safety rules).
+    schema_overrides: dict[str, Any] | None = None
+    effective_input_schema: dict[str, Any] | None = None
     quota: MCPCapabilityQuotaConfig
+
+
+class MCPCapabilitySchemaOverridesUpdate(BaseModel):
+    """Body for ``PUT …/capabilities/{id}/schema-overrides``.
+
+    ``params`` maps param name → supplement fields (``description`` /
+    ``type`` only). The server stamps fingerprints from the CURRENT raw
+    schema and stores status=active; pass ``{}`` to clear all patches.
+    """
+
+    params: dict[str, dict[str, str]] = Field(default_factory=dict)
 
 
 # ── MCP Capability ↔ Principal authorizations ──────────────────────────

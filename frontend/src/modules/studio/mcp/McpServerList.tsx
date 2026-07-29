@@ -20,9 +20,10 @@ import { useTranslation } from 'react-i18next'
 import { api } from '@/api'
 import ServerDrawer, {
   SERVICE_CATEGORY_VALUES, STATUS_COLORS, HEALTH_COLORS, fmt,
+  mcpTestFailText,
   type MCPServerDetail,
 } from './ServerDrawer'
-import { downloadExport, McpImportButton } from './mcpTransfer'
+import { downloadExport, McpImportButton, ExportServersModal } from './mcpTransfer'
 
 const { Title, Text } = Typography
 
@@ -85,6 +86,8 @@ const McpServerList: React.FC = () => {
   const [exportMode, setExportMode] = useState(false)
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([])
   const [selectedCodes, setSelectedCodes] = useState<string[]>([])
+  // 导出确认弹窗:逐个服务器勾选是否一并导出其绑定的外部连接
+  const [exportModalCodes, setExportModalCodes] = useState<string[] | null>(null)
 
   const exitExportMode = () => {
     setExportMode(false)
@@ -92,9 +95,9 @@ const McpServerList: React.FC = () => {
     setSelectedCodes([])
   }
 
-  const onExportSelected = async () => {
-    await downloadExport('/mcp-servers', 'mcp-servers', selectedCodes)
-    exitExportMode()
+  // 点「导出所选」→ 打开确认弹窗(逐服务器选带不带连接)
+  const onExportSelected = () => {
+    if (selectedCodes.length > 0) setExportModalCodes([...selectedCodes])
   }
 
   const fetchStats = async () => {
@@ -224,11 +227,12 @@ const McpServerList: React.FC = () => {
           ms: res.response_time_ms,
           count: res.capabilities_discovered,
         }))
+      } else if (res.status === 'unverified') {
+        message.warning(t('mcp_server_list_msg_test_unverified'))
       } else {
         message.error(t('mcp_server_list_msg_test_fail', {
-          type: res.error_type || '',
-          message: res.error_message || '',
-        }).trim())
+          reason: mcpTestFailText(res.error_type, res.error_message),
+        }))
       }
       reloadAll()
     } catch (e: any) {
@@ -243,12 +247,15 @@ const McpServerList: React.FC = () => {
       const res = await api.post<any>(`/mcp-servers/${server.id}/sync`, {})
       hide()
       const caps = res.capabilities || {}
-      message.success(t('mcp_server_list_msg_sync_done', {
-        status: res.status,
-        added: caps.added || 0,
-        updated: caps.updated || 0,
-        removed: caps.removed || 0,
-      }))
+      const counts = { added: caps.added || 0, updated: caps.updated || 0, removed: caps.removed || 0 }
+      // Friendly, status-specific feedback — never surface the raw enum.
+      if (res.status === 'success') {
+        message.success(t('mcp_server_list_msg_sync_ok', counts))
+      } else if (res.status === 'partial_success') {
+        message.warning(t('mcp_server_list_msg_sync_partial', counts))
+      } else {
+        message.error(t('mcp_server_list_msg_sync_failed'))
+      }
       reloadAll()
     } catch (e: any) {
       hide()
@@ -300,7 +307,31 @@ const McpServerList: React.FC = () => {
       key: 'export',
       icon: <DownloadOutlined />,
       label: t('mcp_transfer_export_row'),
-      onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code]),
+      children: [
+        {
+          key: 'export-plain',
+          label: t('mcp_transfer_export_server_only'),
+          onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code]),
+        },
+        {
+          key: 'export-with-conns',
+          label: t('mcp_transfer_export_with_conns'),
+          onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code],
+            { withConnCodes: [server.code] }),
+        },
+        {
+          key: 'export-with-caps',
+          label: t('mcp_transfer_export_with_caps'),
+          onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code],
+            { withCapCodes: [server.code] }),
+        },
+        {
+          key: 'export-with-conns-and-caps',
+          label: t('mcp_transfer_export_with_conns_and_caps'),
+          onClick: () => downloadExport('/mcp-servers', 'mcp-servers', [server.code],
+            { withConnCodes: [server.code], withCapCodes: [server.code] }),
+        },
+      ],
     },
     {
       key: 'toggle',
@@ -579,6 +610,11 @@ const McpServerList: React.FC = () => {
         detail={editingDetail}
         onClose={() => setDrawerOpen(false)}
         onSaved={reloadAll}
+      />
+
+      <ExportServersModal
+        codes={exportModalCodes}
+        onClose={() => { setExportModalCodes(null); exitExportMode() }}
       />
     </div>
   )

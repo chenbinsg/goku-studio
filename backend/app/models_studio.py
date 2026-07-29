@@ -259,6 +259,13 @@ class MCPServer(Base):
     high_risk_confirm_required = Column(Boolean,    default=True,  server_default="1", nullable=False)
     rate_limit_config         = Column(JSON,        nullable=True)
     circuit_breaker_config    = Column(JSON,        nullable=True)
+    # Declarative read-only "is the datasource usable" probe, run as L3 of the
+    # connection test (mirrors Airbyte/Zapier connector `check`). Shape:
+    #   {"mode":"tool","tool":"<name>","arguments":{...}}  e.g. SELECT 1
+    #   {"mode":"resource","resource":"<uri>"}             (uri optional)
+    #   {"mode":"none"}                                    opt out → amber
+    # Absent → auto (read a resource if any; else amber "unverified").
+    readiness_check           = Column(JSON,        nullable=True)
     audit_enabled             = Column(Boolean,     default=True,  server_default="1", nullable=False)
     created_by                = Column(String(36),  nullable=True)
     created_at                = Column(DateTime,    default=datetime.utcnow, nullable=False)
@@ -282,6 +289,9 @@ class MCPCapability(Base):
     description        = Column(Text,        nullable=True)
     input_schema       = Column(JSON,        nullable=True)
     output_schema      = Column(JSON,        nullable=True)
+    # Admin-curated schema patch layer (holes-only merge + fingerprint
+    # quarantine — see services/mcp_schema_overrides.py)
+    schema_overrides   = Column(JSON,        nullable=True)
     status             = Column(String(20),  default="active", server_default="active", nullable=False)
     quota_enabled      = Column(Boolean,     default=False, server_default="0", nullable=False)
     quota_limit        = Column(Integer,     nullable=True)

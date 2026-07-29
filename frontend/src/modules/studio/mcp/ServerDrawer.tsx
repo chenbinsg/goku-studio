@@ -49,6 +49,10 @@ export const STATUS_COLORS: Record<string, string> = {
 }
 export const HEALTH_COLORS: Record<string, string> = {
   normal: 'success', abnormal: 'error', unchecked: 'default',
+  // Amber middle state: MCP server is up + speaks the protocol, but the
+  // backing datasource wasn't verified (no readiness_check / no readable
+  // resource). Not a green "usable", not a red "broken".
+  unverified: 'warning',
 }
 export const CAPABILITY_STATUS_COLORS: Record<string, string> = {
   active: 'success', inactive: 'default',
@@ -62,6 +66,28 @@ export const mcpHealthText = (h?: string): string =>
   h ? i18n.t(`mcp_health_${h}`, { defaultValue: h }) : '-'
 export const mcpCapabilityStatusText = (s?: string): string =>
   s ? i18n.t(`mcp_capability_status_${s}`, { defaultValue: s }) : '-'
+
+// Raw errors that add nothing for a user once the friendly reason is shown
+// (the reason already says "unreachable / auth failed"). Dropped from the
+// toast so we don't surface bare "McpError: Connection closed".
+const _TEST_ERR_NOISE = new Set(['connection closed', 'connection reset', ''])
+// Turn a probe failure (error_type + raw message) into a friendly, actionable
+// line: a localized reason for the error class, plus the raw detail ONLY when
+// it actually adds information (e.g. "Access denied for user ...").
+export const mcpTestFailText = (errType?: string, rawMsg?: string): string => {
+  // Config-diagnosis errors (connection_not_bound / _disabled / _deleted /
+  // _bound_fail) already carry a specific, actionable message from the
+  // backend — it names the connection and says what to do — so show it as-is.
+  if (errType && errType.startsWith('connection_') && rawMsg) {
+    return rawMsg
+  }
+  const reason = i18n.t(`mcp_err_reason_${errType || 'unknown'}`, {
+    defaultValue: i18n.t('mcp_err_reason_unknown'),
+  })
+  let detail = (rawMsg || '').replace(/^\s*(McpError|Error|Exception)\s*:\s*/i, '').trim()
+  if (_TEST_ERR_NOISE.has(detail.toLowerCase())) detail = ''
+  return detail ? `${reason}（${detail}）` : reason
+}
 export const mcpCategoryText = (c?: string): string =>
   c ? i18n.t(`mcp_category_${c}`, { defaultValue: c }) : '-'
 
@@ -104,9 +130,19 @@ export interface MCPServerDetail {
     // can pre-select the two dropdowns without exposing the full plaintext.
     env_config_connection_id?: string | null
     env_config_server_auth_connection_id?: string | null
+    // Set when this server's bound external connection was DELETED (the
+    // binding was auto-removed). Carries {code, name, keys, at, by}; the
+    // detail page shows a prompt with an acknowledge button that clears it.
+    env_config_binding_lost?: {
+      code?: string
+      name?: string
+      keys?: string[]
+      at?: string
+      by?: string | null
+    } | null
   }
   status: 'enabled' | 'disabled'
-  health_status: 'normal' | 'abnormal' | 'unchecked'
+  health_status: 'normal' | 'unverified' | 'abnormal' | 'unchecked'
   last_checked_at?: string | null
   last_response_time?: number | null
   last_sync_status?: string | null
@@ -127,6 +163,9 @@ export interface MCPServerDetail {
   high_risk_confirm_required: boolean
   rate_limit_config?: Record<string, any>
   circuit_breaker_config?: Record<string, any>
+  // Declarative read-only datasource readiness probe (L3 of the connection
+  // test). null/absent = auto (amber unless a resource is readable).
+  readiness_check?: Record<string, any> | null
   audit_enabled: boolean
   created_by?: string
   created_at: string
@@ -352,6 +391,7 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
         server_auth_connection_code: detail.secrets.env_config_server_auth_connection_id || undefined,
         auto_sync_enabled: detail.auto_sync_enabled,
         sync_frequency: detail.sync_frequency || 'manual',
+        readiness_check: detail.readiness_check ? JSON.stringify(detail.readiness_check, null, 2) : '',
         sync_scope: JSON.stringify(detail.sync_scope || {}),
         conflict_strategy: detail.conflict_strategy || 'overwrite',
         offline_strategy: detail.offline_strategy || 'mark_inactive',
@@ -410,6 +450,21 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
       const circuit_breaker_config = values.circuit_breaker_config
         ? (() => { try { return JSON.parse(values.circuit_breaker_config) } catch { return undefined } })()
         : undefined
+      // readiness_check: empty → clear (null on edit, omit on create); invalid
+      // JSON → hard error (don't silently drop a datasource-probe config).
+      let readiness_check: any = undefined
+      const rcRaw = (values.readiness_check || '').trim()
+      if (rcRaw === '') {
+        readiness_check = mode === 'edit' ? null : undefined
+      } else {
+        try {
+          readiness_check = JSON.parse(rcRaw)
+        } catch {
+          message.error(t('mcp_server_drawer_msg_readiness_json_error'))
+          setSaving(false)
+          return
+        }
+      }
 
       // Merge BOTH connection dropdowns into env_config:
       //   connection_id              — external system the server CALLS
@@ -419,7 +474,15 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
       let envForSave: string | undefined = values.env_config
       const code = (values.connection_code || '').trim()
       const authCode = (values.server_auth_connection_code || '').trim()
-      if (mode === 'edit' && envForSave === '' && !code && !authCode) {
+      // Was a binding present before this edit? If the user cleared it, that's
+      // an intentional removal — NOT a no-op — and must be expressed to the
+      // backend (otherwise a lone binding can never be cleared, and a save
+      // silently keeps the stale/deleted connection).
+      const origCode = mode === 'edit' ? (detail?.secrets?.env_config_connection_id || '') : ''
+      const origAuth = mode === 'edit' ? (detail?.secrets?.env_config_server_auth_connection_id || '') : ''
+      const clearedBinding = mode === 'edit' && !!(origCode || origAuth) && !code && !authCode
+      let clearEnvConfig = false
+      if (mode === 'edit' && envForSave === '' && !code && !authCode && !clearedBinding) {
         // Pure no-op edit: leave env_config untouched on the server side.
         envForSave = undefined
       } else {
@@ -446,10 +509,19 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
         } else {
           delete envDict.server_auth_connection_id
         }
-        envForSave = Object.keys(envDict).length > 0 ? JSON.stringify(envDict) : undefined
+        if (Object.keys(envDict).length > 0) {
+          envForSave = JSON.stringify(envDict)
+        } else {
+          // env is now empty. If we got here by clearing the binding, the
+          // env_config must be actively wiped (clear_env_config) — an absent
+          // env_config means "keep stored", which would leave the binding.
+          envForSave = undefined
+          if (clearedBinding) clearEnvConfig = true
+        }
       }
 
       const base: any = {
+        ...(clearEnvConfig ? { clear_env_config: true } : {}),
         name: values.name,
         service_category: values.service_category,
         description: values.description,
@@ -467,6 +539,7 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
         conflict_strategy: values.conflict_strategy,
         offline_strategy: values.offline_strategy,
         circuit_breaker_config,
+        readiness_check,
         audit_enabled: values.audit_enabled,
       }
       const payload = buildSecretFields(base, mode === 'edit')
@@ -773,6 +846,22 @@ const ServerDrawer: React.FC<ServerDrawerProps> = ({ open, mode, detail, onClose
                 })()}
               >
                 <Input.TextArea rows={3} placeholder={t('mcp_server_drawer_ph_env_config')} />
+              </Form.Item>
+            </Col>
+          </Row>
+
+          <Divider orientation="left" plain>{t('mcp_server_drawer_section_readiness')}</Divider>
+          <Row gutter={12}>
+            <Col span={24}>
+              <Form.Item
+                label={t('mcp_server_drawer_field_readiness')}
+                name="readiness_check"
+                extra={t('mcp_server_drawer_extra_readiness')}
+              >
+                <Input.TextArea
+                  rows={3}
+                  placeholder={'{"mode":"tool","tool":"mysql_query","arguments":{"sql":"SELECT 1"}}'}
+                />
               </Form.Item>
             </Col>
           </Row>

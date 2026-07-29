@@ -8,12 +8,13 @@
  * 有冲突就弹窗让用户逐条决定 —— 跳过,或重新输入一个新编码导入。新编码
  * 输入后立即做唯一性校验(查库 + 查文件内重复),重复会标红提醒。
  */
-import React, { useState } from 'react'
-import { Button, Input, Modal, Radio, Select, Space, Tooltip, Typography, message } from 'antd'
+import React, { useRef, useState } from 'react'
+import { Button, Checkbox, Input, Modal, Radio, Select, Space, Tooltip, Typography, message } from 'antd'
 import { DownloadOutlined, UploadOutlined } from '@ant-design/icons'
 import { useTranslation } from 'react-i18next'
 import i18n from 'i18next'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 
 const { Text } = Typography
 
@@ -22,10 +23,23 @@ export interface TransferImportResult {
   created: string[]
   skipped: string[]
   errors: { code: string; message: string }[]
+  // Server import only: outcome of carried external connections + created
+  // server ids (for the follow-up capability sync step).
+  connections?: { created: string[]; skipped: string[]; errors: { code: string; message: string }[] }
+  created_servers?: { code: string; id: string }[]
 }
 
 /** 与后端 schema 的 code 校验一致(MCPServerCreate._validate_code)。 */
 export const CODE_PATTERN = /^[a-z0-9][a-z0-9_-]*$/
+
+/** 导出时敏感值被抹成的占位说明文字(与后端 SECRET_PLACEHOLDER 对应)。
+ *  用来判断导入文件里的 secret 值是"真密钥"还是"待填占位"。 */
+function isSecretPlaceholder(v: unknown): boolean {
+  if (typeof v !== 'string') return true          // 非字符串/缺失 → 视为待填
+  const s = v.trim()
+  if (!s) return true                             // 空 → 待填
+  return s.includes('敏感信息不随导出文件提供') || s.includes('********')
+}
 
 /** 查库:codes 里哪些已被占用。新建抽屉的实时校验也用它。 */
 export async function fetchExistingCodes(path: string, codes: string[]): Promise<string[]> {
@@ -41,20 +55,39 @@ export async function fetchExistingCodes(path: string, codes: string[]): Promise
  *  全部 = 表头全选)。 */
 export async function downloadExport(
   path: string, filenamePrefix: string, codes: string[],
+  opts?: { withConnCodes?: string[]; withCapCodes?: string[] },
 ): Promise<void> {
   if (!codes.length) return
   try {
-    const bundle = await api.get<Record<string, unknown>>(
-      `${path}/export`, { params: { codes: codes.join(',') } },
-    )
-    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
+    // Batch (2+) returns a zip, single returns JSON — the response is binary
+    // either way and we need the headers to name the file, so fetch directly
+    // (the api wrapper only exposes response.data).
+    const qs = new URLSearchParams({ codes: codes.join(',') })
+    if (opts?.withConnCodes?.length) qs.set('with_conn_codes', opts.withConnCodes.join(','))
+    if (opts?.withCapCodes?.length) qs.set('with_cap_codes', opts.withCapCodes.join(','))
+    const base = (import.meta as any).env?.VITE_API_URL || '/api/v1'
+    const token = useAuthStore.getState().token
+    const resp = await fetch(`${base}${path}/export?${qs.toString()}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!resp.ok) {
+      let msg = `导出失败 (${resp.status})`
+      try { const j = await resp.json(); msg = j?.detail?.message || j?.detail || msg } catch { /* not json */ }
+      message.error(msg)
+      return
+    }
+    const blob = await resp.blob()
+    const cd = resp.headers.get('content-disposition') || ''
+    const m = cd.match(/filename="?([^"]+)"?/)
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    const isZip = (resp.headers.get('content-type') || '').includes('zip')
+    const fallback = codes.length === 1
+      ? `${filenamePrefix}-${codes[0]}-${stamp}.json`
+      : `${filenamePrefix}-${stamp}.${isZip ? 'zip' : 'json'}`
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
     a.href = url
-    a.download = codes.length === 1
-      ? `${filenamePrefix}-${codes[0]}-${stamp}.json`
-      : `${filenamePrefix}-${stamp}.json`
+    a.download = m ? m[1] : fallback
     a.click()
     URL.revokeObjectURL(url)
     message.success(i18n.t('mcp_transfer_export_success'))
@@ -63,31 +96,327 @@ export async function downloadExport(
   }
 }
 
-function showImportResult(res: TransferImportResult, userSkipped = 0): void {
+interface ServerBinding {
+  code: string
+  name: string
+  bound_connections: string[]
+  capability_config_count?: number  // how many capabilities carry result_script/schema_overrides
+}
+
+/** 批量导出确认弹窗:逐个服务器勾选是否一并导出其绑定的外部连接。
+ *  确认后:多个服务器 → 后端返回 zip(每服务器一个 JSON);单个 → JSON。
+ *  ``codes`` 为空(null)= 关闭。 */
+export function ExportServersModal({
+  codes, onClose,
+}: { codes: string[] | null; onClose: () => void }) {
+  const { t } = useTranslation()
+  const [rows, setRows] = useState<ServerBinding[]>([])
+  const [withConn, setWithConn] = useState<Set<string>>(new Set())
+  const [withCap, setWithCap] = useState<Set<string>>(new Set())
+  const [loading, setLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
+
+  React.useEffect(() => {
+    if (!codes?.length) return
+    setLoading(true)
+    setWithConn(new Set())
+    setWithCap(new Set())
+    api.get<{ servers: ServerBinding[] }>('/mcp-servers/binding-summary', { params: { codes: codes.join(',') } })
+      .then((r) => setRows(r.servers || []))
+      .catch(() => setRows(codes.map((c) => ({ code: c, name: c, bound_connections: [] }))))
+      .finally(() => setLoading(false))
+  }, [codes])
+
+  const toggle = (code: string, on: boolean) => {
+    setWithConn((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(code); else next.delete(code)
+      return next
+    })
+  }
+  const toggleCap = (code: string, on: boolean) => {
+    setWithCap((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(code); else next.delete(code)
+      return next
+    })
+  }
+  const bindable = rows.filter((r) => r.bound_connections.length > 0)
+  const allOn = bindable.length > 0 && bindable.every((r) => withConn.has(r.code))
+
+  const onOk = async () => {
+    if (!codes?.length) return
+    setExporting(true)
+    try {
+      await downloadExport('/mcp-servers', 'mcp-servers', codes, {
+        withConnCodes: [...withConn], withCapCodes: [...withCap],
+      })
+      onClose()
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={!!codes?.length}
+      title={t('mcp_transfer_export_modal_title')}
+      okText={t('mcp_transfer_export_modal_ok')}
+      okButtonProps={{ loading: exporting }}
+      onOk={onOk}
+      onCancel={onClose}
+      width={560}
+    >
+      <p><Text type="secondary">{t('mcp_transfer_export_modal_hint', { count: codes?.length || 0 })}</Text></p>
+      {bindable.length > 0 && (
+        <div style={{ marginBottom: 8 }}>
+          <a onClick={() => setWithConn(allOn ? new Set() : new Set(bindable.map((r) => r.code)))}>
+            {allOn ? t('mcp_transfer_export_modal_none') : t('mcp_transfer_export_modal_all')}
+          </a>
+        </div>
+      )}
+      <div style={{ maxHeight: 320, overflow: 'auto' }}>
+        {(loading ? (codes || []).map((c): ServerBinding => ({ code: c, name: c, bound_connections: [], capability_config_count: 0 })) : rows).map((r) => (
+          <div key={r.code} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span><Text code>{r.code}</Text> <Text type="secondary" style={{ fontSize: 12 }}>{r.name}</Text></span>
+            <Space direction="vertical" align="end" size={2}>
+              {r.bound_connections.length > 0 && (
+                <Checkbox checked={withConn.has(r.code)} onChange={(e) => toggle(r.code, e.target.checked)}>
+                  {t('mcp_transfer_export_modal_incl', { n: r.bound_connections.length })}
+                </Checkbox>
+              )}
+              {(r.capability_config_count || 0) > 0 && (
+                <Checkbox checked={withCap.has(r.code)} onChange={(e) => toggleCap(r.code, e.target.checked)}>
+                  {t('mcp_transfer_export_modal_incl_caps', { n: r.capability_config_count })}
+                </Checkbox>
+              )}
+              {r.bound_connections.length === 0 && (r.capability_config_count || 0) === 0 && (
+                <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_transfer_export_modal_no_binding')}</Text>
+              )}
+            </Space>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  )
+}
+
+/** 导入结束弹窗:显示本轮结果(新建/跳过/失败明细),两个按钮——
+ *  「关闭」结束,「继续导入」立即再开一轮文件选择,方便一个个连着导。 */
+function showImportResult(
+  res: TransferImportResult, userSkipped: number, onContinue: () => void,
+): void {
   // 用户在冲突弹窗里选「跳过」的条目不会发给后端,这里合并计入提示
   const line = i18n.t('mcp_transfer_import_result_line', {
     created: res.created.length,
     skipped: res.skipped.length + userSkipped,
     failed: res.errors.length,
   })
-  if (res.errors?.length) {
-    Modal.warning({
-      title: i18n.t('mcp_transfer_import_partial_title'),
-      width: 560,
-      content: (
-        <div>
-          <p>{line}</p>
-          <ul style={{ maxHeight: 240, overflow: 'auto', paddingLeft: 18 }}>
+  const modal = Modal[res.errors?.length ? 'warning' : 'success']({
+    title: i18n.t(res.errors?.length
+      ? 'mcp_transfer_import_partial_title'
+      : 'mcp_transfer_import_done_title'),
+    width: 560,
+    content: (
+      <div>
+        <p>{line}</p>
+        {res.created.length > 0 && (
+          <p style={{ margin: '4px 0' }}>
+            <span style={{ color: '#52c41a' }}>✓ </span>
+            {i18n.t('mcp_transfer_import_created_list', { codes: res.created.join('、') })}
+          </p>
+        )}
+        {res.errors?.length > 0 && (
+          <ul style={{ maxHeight: 200, overflow: 'auto', paddingLeft: 18 }}>
             {res.errors.map((er, idx) => (
               <li key={idx}><b>{er.code || '?'}</b>: {er.message}</li>
             ))}
           </ul>
-        </div>
-      ),
-    })
-  } else {
-    message.success(line)
+        )}
+      </div>
+    ),
+    okText: i18n.t('mcp_transfer_import_close'),
+    // 「继续导入」用 cancel 位放一个次要按钮。禁掉 X / 遮罩关闭,避免误触
+    // continue —— 只能从两个明确按钮里选。
+    okCancel: true,
+    cancelText: i18n.t('mcp_transfer_import_continue'),
+    closable: false,
+    maskClosable: false,
+    keyboard: false,
+    onCancel: () => { modal.destroy(); onContinue() },
+  })
+}
+
+/** B-段:MCP 服务器导入完成后的结果弹窗。列出新建的服务器,每个一个「同步能力」
+ *  按钮(多服务器 = 逐个按钮)。同步成功后展开该服务器的能力清单:文件带了配置的
+ *  能力单独一个「导入能力配置」按钮,没配置的显示「无可导入配置」。同步/导入成功后
+ *  都切成完成态,不再可重复点。 */
+function ServerImportResultModal({
+  data, onClose, onContinue,
+}: {
+  data: { res: TransferImportResult; capsByCode: Record<string, any[]>; userSkipped: number } | null
+  onClose: () => void
+  onContinue: () => void
+}) {
+  const { t } = useTranslation()
+  const [syncing, setSyncing] = useState<Record<string, boolean>>({})
+  const [syncErr, setSyncErr] = useState<Record<string, string>>({})
+  const [capsList, setCapsList] = useState<Record<string, { id: string; capability_name: string }[]>>({})
+  const [applying, setApplying] = useState<Record<string, boolean>>({})
+  const [applied, setApplied] = useState<Record<string, { ok: boolean; text: string }>>({})
+
+  const errText = (e: any) =>
+    e?.response?.data?.detail?.message || e?.response?.data?.detail || e?.message || String(e)
+
+  if (!data) return null
+  const { res, capsByCode } = data
+  const createdServers = res.created_servers || []
+  const conn = res.connections
+  const configFor = (code: string, capName: string) =>
+    (capsByCode[code] || []).find((c: any) => c?.capability_name === capName)
+
+  const runSync = async (code: string, id: string) => {
+    setSyncing((p) => ({ ...p, [code]: true }))
+    setSyncErr((p) => ({ ...p, [code]: '' }))
+    try {
+      await api.post(`/mcp-servers/${id}/sync`)
+      const list = await api.get<{ items: { id: string; capability_name: string }[] }>(
+        `/mcp-servers/${id}/capabilities`, { params: { size: 200 } },
+      )
+      setCapsList((p) => ({ ...p, [code]: list.items || [] }))
+    } catch (e: any) {
+      setSyncErr((p) => ({ ...p, [code]: errText(e) }))
+    } finally {
+      setSyncing((p) => ({ ...p, [code]: false }))
+    }
   }
+
+  const runApply = async (code: string, id: string, capName: string) => {
+    const cfg = configFor(code, capName)
+    if (!cfg) return
+    const key = `${code}::${capName}`
+    setApplying((p) => ({ ...p, [key]: true }))
+    try {
+      const ap = await api.post<any>(`/mcp-servers/${id}/apply-capability-config`, { capabilities: [cfg] })
+      const okCount = (ap?.applied || []).length
+      const errCount = (ap?.errors || []).length
+      if (okCount > 0 && errCount === 0) {
+        setApplied((p) => ({ ...p, [key]: { ok: true, text: t('mcp_transfer_cap_applied') } }))
+      } else {
+        const msg = ap?.errors?.[0]?.message || t('mcp_transfer_cap_apply_failed')
+        setApplied((p) => ({ ...p, [key]: { ok: false, text: msg } }))
+      }
+    } catch (e: any) {
+      setApplied((p) => ({ ...p, [key]: { ok: false, text: errText(e) } }))
+    } finally {
+      setApplying((p) => ({ ...p, [key]: false }))
+    }
+  }
+
+  return (
+    <Modal
+      open={!!data}
+      title={t('mcp_transfer_srv_result_title')}
+      width={640}
+      okText={t('mcp_transfer_import_close')}
+      onOk={onClose}
+      cancelText={t('mcp_transfer_import_continue')}
+      onCancel={onContinue}
+      closable={false}
+      maskClosable={false}
+      keyboard={false}
+    >
+      <p><Text type="secondary">{t('mcp_transfer_srv_result_hint')}</Text></p>
+      <p>{t('mcp_transfer_import_result_line', {
+        created: res.created.length,
+        skipped: res.skipped.length + data.userSkipped,
+        failed: res.errors.length,
+      })}</p>
+      {conn && (
+        <p style={{ margin: '4px 0' }}>
+          <Text type="secondary">{t('mcp_transfer_conn_sub_result', {
+            created: conn.created.length, skipped: conn.skipped.length, failed: conn.errors.length,
+          })}</Text>
+        </p>
+      )}
+      <div style={{ maxHeight: 360, overflow: 'auto' }}>
+        {createdServers.map((s) => {
+          const list = capsList[s.code]
+          const synced = list !== undefined
+          const missing = synced
+            ? (capsByCode[s.code] || [])
+                .map((c: any) => c?.capability_name)
+                .filter((n: string) => n && !list!.some((c) => c.capability_name === n))
+            : []
+          return (
+            <div key={s.id} style={{ padding: '10px 0', borderBottom: '1px solid #f0f0f0' }}>
+              <Space wrap>
+                <Text code>{s.code}</Text>
+                <Button
+                  size="small"
+                  type="primary"
+                  ghost
+                  loading={!!syncing[s.code]}
+                  disabled={synced}
+                  onClick={() => runSync(s.code, s.id)}
+                >
+                  {synced ? t('mcp_transfer_synced') : t('mcp_transfer_sync_caps')}
+                </Button>
+              </Space>
+              {syncErr[s.code] && (
+                <div style={{ marginTop: 4 }}><Text type="danger" style={{ fontSize: 12 }}>{syncErr[s.code]}</Text></div>
+              )}
+              {synced && (
+                <div style={{ marginLeft: 16, marginTop: 6 }}>
+                  {list!.length === 0 && (
+                    <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_transfer_no_caps')}</Text>
+                  )}
+                  {list!.map((c) => {
+                    const has = !!configFor(s.code, c.capability_name)
+                    const key = `${s.code}::${c.capability_name}`
+                    const ap = applied[key]
+                    return (
+                      <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '3px 0' }}>
+                        <Text style={{ flex: 1 }}>{c.capability_name}</Text>
+                        {!has ? (
+                          <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_transfer_no_cap_config')}</Text>
+                        ) : ap?.ok ? (
+                          <Text type="success" style={{ fontSize: 12 }}>✓ {t('mcp_transfer_cap_applied')}</Text>
+                        ) : (
+                          <Space size={6}>
+                            {ap && !ap.ok && <Text type="danger" style={{ fontSize: 12 }}>{ap.text}</Text>}
+                            <Button
+                              size="small"
+                              loading={!!applying[key]}
+                              onClick={() => runApply(s.code, s.id, c.capability_name)}
+                            >
+                              {t('mcp_transfer_import_cap_config')}
+                            </Button>
+                          </Space>
+                        )}
+                      </div>
+                    )
+                  })}
+                  {missing.length > 0 && (
+                    <div style={{ marginTop: 4 }}>
+                      <Text type="warning" style={{ fontSize: 12 }}>
+                        {t('mcp_transfer_cap_unmatched', { names: missing.join('、') })}
+                      </Text>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+      {res.errors?.length > 0 && (
+        <ul style={{ maxHeight: 160, overflow: 'auto', paddingLeft: 18, marginTop: 8 }}>
+          {res.errors.map((er, idx) => (<li key={idx}><b>{er.code || '?'}</b>: {er.message}</li>))}
+        </ul>
+      )}
+    </Modal>
+  )
 }
 
 interface ConflictDecision {
@@ -95,6 +424,7 @@ interface ConflictDecision {
   action: 'skip' | 'rename'
   newCode: string
   error: string
+  validated: boolean  // rename 的新 code 是否已通过查重校验(未通过则禁用确定)
 }
 
 /** 服务器条目需要绑定外部连接时的选择。绑定靠连接的 code
@@ -112,6 +442,17 @@ interface ConnOption {
   connection_type: string
 }
 
+/** 外部连接导入时,一条连接的鉴权(secret)填写。导出时 secret 的值被抹成
+ *  占位符;导入时给一个 JSON 文本框,预填整个 secret 结构,用户直接改——
+ *  把占位符换成真密钥即建好;保留占位符/留空 = 该字段只当 label 稍后再填。
+ *  用文本框而非逐字段输入,是因为 secret 结构不固定(可能多字段/嵌套),
+ *  程序无法可靠拆成一个个输入框。 */
+interface SecretFill {
+  connCode: string   // 文件里该连接的 code
+  json: string       // 该连接 secret 的 JSON 文本(预填导出结构,用户编辑)
+  error: string      // JSON 解析错误提示,空 = 无错
+}
+
 /** 「导入」按钮 + 冲突确认弹窗。path 形如 '/mcp-servers'。 */
 export function McpImportButton({ path, onDone }: { path: string; onDone: () => void }) {
   const { t } = useTranslation()
@@ -119,7 +460,12 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
   const [decisions, setDecisions] = useState<ConflictDecision[]>([])
   const [connFixes, setConnFixes] = useState<ConnFix[]>([])
   const [connOptions, setConnOptions] = useState<ConnOption[]>([])
+  const [secretFills, setSecretFills] = useState<SecretFill[]>([])
   const [importing, setImporting] = useState(false)
+  // B-段: server-import result (per-server capability sync + config backfill).
+  const [srvResult, setSrvResult] = useState<
+    { res: TransferImportResult; capsByCode: Record<string, any[]>; userSkipped: number } | null
+  >(null)
 
   const refreshConnOptions = async () => {
     const res = await api.get<{ items: ConnOption[] }>('/mcp-external-connections')
@@ -161,9 +507,22 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
     setImporting(true)
     try {
       const res = await api.post<TransferImportResult>(`${path}/import`, b)
-      showImportResult(res, userSkipped)
       closeModal()
       onDone()
+      if (path === '/mcp-servers') {
+        // B-段: hand off to the interactive result modal (per-server capability
+        // sync + optional config backfill). Keep the file's capabilities keyed
+        // by the FINAL (renamed) server code.
+        const capsByCode: Record<string, any[]> = {}
+        for (const it of ((b as any)?.items || [])) {
+          if (Array.isArray(it?.capabilities) && it.capabilities.length) {
+            capsByCode[String(it.code || '').trim()] = it.capabilities
+          }
+        }
+        setSrvResult({ res, capsByCode, userSkipped })
+      } else {
+        showImportResult(res, userSkipped, pickFile)
+      }
     } catch (e: any) {
       message.error(e?.response?.data?.detail?.message || e?.response?.data?.detail || e?.message || String(e))
     } finally {
@@ -190,37 +549,77 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
         .filter(Boolean)
       let existing: string[] = []
       const fixes: ConnFix[] = []
+      const fills: SecretFill[] = []
       try {
         existing = await fetchExistingCodes(path, codes)
         // 服务器导入:导出文件里连接绑定值已被清空(键仍在),说明这些
         // 服务器需要在本环境选连接。逐个收集,交给弹窗让用户下拉选。
         if (path === '/mcp-servers') {
+          // Connections carried in the file are created on import and keep the
+          // binding — so don't ask the user to pick those; only bindings that
+          // reference a NON-carried connection need a manual choice.
+          const carried = new Set<string>(
+            (parsed?.connections || [])
+              .map((c: any) => String(c?.code || '').trim())
+              .filter(Boolean),
+          )
           for (const it of parsed?.items || []) {
             const env = it?.env_config
             if (!env || typeof env !== 'object') continue
             for (const field of ['connection_id', 'server_auth_connection_id'] as const) {
               if (field in env) {
+                const val = typeof env[field] === 'string' ? env[field].trim() : ''
+                if (val && carried.has(val)) continue  // auto-created + auto-bound
                 fixes.push({ itemCode: String(it?.code || '').trim(), field, chosen: '' })
               }
             }
           }
+          // Carried connections whose secret still has a placeholder → collect
+          // the auth fill (A-段: gather all auth in this one dialog).
+          for (const c of parsed?.connections || []) {
+            const secret = c?.secret
+            if (!secret || typeof secret !== 'object') continue
+            if (!Object.values(secret).some(isSecretPlaceholder)) continue
+            fills.push({
+              connCode: String(c?.code || '').trim(),
+              json: JSON.stringify(secret, null, 2),
+              error: '',
+            })
+          }
           if (fixes.length > 0) {
             await refreshConnOptions()
+          }
+        }
+        // 外部连接导入:凡有 secret 且其中有占位符字段的连接,给一个 JSON
+        // 文本框让用户填鉴权(整块编辑,应对不固定/嵌套结构)。secret 里
+        // 全是真值的连接不打扰,直接建好。
+        if (path === '/mcp-external-connections') {
+          for (const it of parsed?.items || []) {
+            const secret = it?.secret
+            if (!secret || typeof secret !== 'object') continue
+            const hasPlaceholder = Object.values(secret).some(isSecretPlaceholder)
+            if (!hasPlaceholder) continue  // 全真值 → 不用填
+            fills.push({
+              connCode: String(it?.code || '').trim(),
+              json: JSON.stringify(secret, null, 2),
+              error: '',
+            })
           }
         }
       } catch (e: any) {
         message.error(e?.response?.data?.detail?.message || e?.response?.data?.detail || e?.message || String(e))
         return
       }
-      if (existing.length === 0 && fixes.length === 0) {
+      if (existing.length === 0 && fixes.length === 0 && fills.length === 0) {
         await doImport(parsed)
         return
       }
-      // 有编码冲突或缺失的连接绑定 → 弹窗逐条确认
+      // 有编码冲突 / 缺连接绑定 / 待填鉴权 → 弹窗逐条确认
       setDecisions(existing.map((code) => ({
-        original: code, action: 'skip', newCode: '', error: '',
+        original: code, action: 'skip', newCode: '', error: '', validated: false,
       })))
       setConnFixes(fixes)
+      setSecretFills(fills)
       setBundle(parsed)
     }
     input.click()
@@ -230,13 +629,22 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
     setDecisions((prev) => prev.map((d, i) => (i === idx ? { ...d, ...patch } : d)))
   }
 
-  /** 新编码的即时校验:格式 → 文件内重复 → 查库重复。 */
-  const validateNewCode = async (idx: number) => {
+  // 输入停顿即校验(去抖),不必等失焦——填完停一下确定按钮就自动判定。
+  // 显式传入待校验的值,避免去抖回调读到闭包里过期的 decisions。
+  const codeDebounce = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+  const scheduleValidate = (idx: number, value: string) => {
+    clearTimeout(codeDebounce.current[idx])
+    codeDebounce.current[idx] = setTimeout(() => validateNewCode(idx, value), 400)
+  }
+
+  /** 新编码的即时校验:格式 → 文件内重复 → 查库重复。
+   *  ``explicit`` 用于去抖路径传当次输入值;省略则读当前状态(失焦路径)。 */
+  const validateNewCode = async (idx: number, explicit?: string) => {
     const d = decisions[idx]
     if (d.action !== 'rename') return
-    const v = d.newCode.trim()
-    if (!v) { setDecision(idx, { error: t('mcp_transfer_code_required') }); return }
-    if (!CODE_PATTERN.test(v)) { setDecision(idx, { error: t('mcp_transfer_code_format') }); return }
+    const v = (explicit !== undefined ? explicit : d.newCode).trim()
+    if (!v) { setDecision(idx, { error: t('mcp_transfer_code_required'), validated: false }); return }
+    if (!CODE_PATTERN.test(v)) { setDecision(idx, { error: t('mcp_transfer_code_format'), validated: false }); return }
     const fileCodes: string[] = (bundle?.items || [])
       .map((it: any) => String(it?.code || '').trim())
       .filter((c: string) => c !== d.original)
@@ -244,15 +652,20 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
       .filter((x, i) => i !== idx && x.action === 'rename')
       .map((x) => x.newCode.trim())
     if (fileCodes.includes(v) || otherNew.includes(v)) {
-      setDecision(idx, { error: t('mcp_transfer_code_duplicate_in_file') })
+      setDecision(idx, { error: t('mcp_transfer_code_duplicate_in_file'), validated: false })
       return
     }
     try {
       const taken = await fetchExistingCodes(path, [v])
-      setDecision(idx, { error: taken.includes(v) ? t('mcp_transfer_code_taken') : '' })
+      if (taken.includes(v)) {
+        setDecision(idx, { error: t('mcp_transfer_code_taken'), validated: false })
+      } else {
+        setDecision(idx, { error: '', validated: true })   // 唯一通过校验的路径
+      }
     } catch {
-      // 校验接口偶发失败不挡输入;确认导入前还会整体复查一遍
-      setDecision(idx, { error: '' })
+      // 查重接口偶发失败:不误报错,但也不算通过(确定按钮仍禁用,
+      // 促使用户重试失焦触发校验)。
+      setDecision(idx, { error: '', validated: false })
     }
   }
 
@@ -287,6 +700,29 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
       if (!fixesByItem.has(f.itemCode)) fixesByItem.set(f.itemCode, [])
       fixesByItem.get(f.itemCode)!.push(f)
     }
+    // 校验并解析每条连接的 secret JSON。被跳过的连接(冲突选了跳过)不导入,
+    // 其鉴权框内容一律忽略,不参与校验、不阻塞。
+    const skippedCodes = new Set(
+      decisions.filter((d) => d.action === 'skip').map((d) => d.original),
+    )
+    const parsedSecret = new Map<string, Record<string, unknown>>()
+    let secretErr = false
+    setSecretFills((prev) => prev.map((f) => {
+      if (skippedCodes.has(f.connCode)) return { ...f, error: '' }
+      try {
+        const obj = JSON.parse(f.json || '{}')
+        if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+          parsedSecret.set(f.connCode, obj)
+          return { ...f, error: '' }
+        }
+        secretErr = true
+        return { ...f, error: t('mcp_transfer_secret_not_object') }
+      } catch {
+        secretErr = true
+        return { ...f, error: t('mcp_transfer_import_invalid_json') }
+      }
+    }))
+    if (secretErr) return
     const items = (bundle?.items || []).flatMap((it: any) => {
       const origCode = String(it?.code || '').trim()
       const d = decisionByCode.get(origCode)
@@ -300,6 +736,11 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
         for (const f of fixes) env[f.field] = f.chosen || ''
         out = { ...out, env_config: env }
       }
+      // 外部连接:用用户编辑后的 secret JSON 整体替换。后端按值分流——
+      // 真值加密存,占位符/空值保留 key 当待填 label。
+      if (parsedSecret.has(origCode)) {
+        out = { ...out, secret: parsedSecret.get(origCode) }
+      }
       return [out]
     })
     const userSkipped = decisions.filter((d) => d.action === 'skip').length
@@ -309,19 +750,109 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
       closeModal()
       return
     }
-    await doImport({ ...bundle, items }, userSkipped)
+    const outBundle: any = { ...bundle, items }
+    // Server bundle: fold the filled auth back into the carried connections
+    // (their codes live in `connections`, not `items`).
+    if (path === '/mcp-servers' && Array.isArray(bundle?.connections)) {
+      outBundle.connections = bundle.connections.map((c: any) => {
+        const code = String(c?.code || '').trim()
+        return parsedSecret.has(code) ? { ...c, secret: parsedSecret.get(code) } : c
+      })
+    }
+    await doImport(outBundle, userSkipped)
   }
 
   const closeModal = () => {
     setBundle(null)
     setDecisions([])
     setConnFixes([])
+    setSecretFills([])
   }
 
-  // 连接不选 = 留空稍后配,不阻塞确认;仅编码冲突未解决时禁用
+  const setSecretJson = (idx: number, json: string) => {
+    setSecretFills((prev) => prev.map((f, i) => (i === idx ? { ...f, json, error: '' } : f)))
+  }
+
+  // 确定按钮:任何"改名"项必须已通过查重校验(validated)才放行 —— 光输入、
+  // 未失焦触发校验的中间态一律禁用。跳过项、留空鉴权不阻塞。
   const hasBlockingError = decisions.some(
-    (d) => d.action === 'rename' && (d.error !== '' || !d.newCode.trim()),
+    (d) => d.action === 'rename' && !d.validated,
   )
+
+  /** 外部连接导入弹窗:按连接聚合渲染。每条连接一块,内容由其状态决定:
+   *  - 冲突 → 跳过/改名单选;选改名再显示 code 框 +(如需要)鉴权 JSON 框;
+   *          选跳过则该块下方不显示任何输入项。
+   *  - 不冲突但需填鉴权 → 只显示鉴权 JSON 框(没有跳过/改名)。 */
+  const renderConnBlocks = () => {
+    // 有序去重:先冲突项、再纯待填项,按出现顺序
+    const order: string[] = []
+    const seen = new Set<string>()
+    for (const d of decisions) if (!seen.has(d.original)) { order.push(d.original); seen.add(d.original) }
+    for (const f of secretFills) if (!seen.has(f.connCode)) { order.push(f.connCode); seen.add(f.connCode) }
+
+    return order.map((code) => {
+      const dIdx = decisions.findIndex((d) => d.original === code)
+      const d = dIdx >= 0 ? decisions[dIdx] : null
+      const sIdx = secretFills.findIndex((f) => f.connCode === code)
+      const s = sIdx >= 0 ? secretFills[sIdx] : null
+      const skipped = d?.action === 'skip'
+      // 鉴权框显示条件:有待填 secret,且没被跳过(冲突项须选了改名)
+      const showSecret = !!s && !skipped && (!d || d.action === 'rename')
+      return (
+        <div key={code} style={{ padding: '10px 0', borderBottom: '1px solid #f0f0f0' }}>
+          <Space direction="vertical" style={{ width: '100%' }} size={6}>
+            <Space wrap>
+              <Text code>{code}</Text>
+              {d && (
+                <Radio.Group
+                  size="small"
+                  value={d.action}
+                  onChange={(e) => setDecision(dIdx, { action: e.target.value, error: '', validated: false })}
+                  options={[
+                    { label: t('mcp_transfer_conflict_skip'), value: 'skip' },
+                    { label: t('mcp_transfer_conflict_rename'), value: 'rename' },
+                  ]}
+                  optionType="button"
+                />
+              )}
+              {d && <Text type="secondary" style={{ fontSize: 12 }}>{t('mcp_transfer_conn_conflict_tag')}</Text>}
+            </Space>
+            {d?.action === 'rename' && (
+              <div>
+                <Input
+                  size="small"
+                  style={{ width: 320 }}
+                  placeholder={t('mcp_transfer_conflict_new_code_placeholder')}
+                  value={d.newCode}
+                  status={d.error ? 'error' : undefined}
+                  onChange={(e) => { setDecision(dIdx, { newCode: e.target.value, error: '', validated: false }); scheduleValidate(dIdx, e.target.value) }}
+                  onBlur={() => validateNewCode(dIdx)}
+                />
+                {/* 固定高度占位:报错显隐不改变下方布局,避免整窗跳动 */}
+                <div style={{ height: 18, lineHeight: '18px' }}>
+                  {d.error && <Text type="danger" style={{ fontSize: 12 }}>{d.error}</Text>}
+                </div>
+              </div>
+            )}
+            {showSecret && (
+              <div>
+                <Input.TextArea
+                  rows={Math.min(8, (s!.json.match(/\n/g)?.length || 0) + 1)}
+                  value={s!.json}
+                  status={s!.error ? 'error' : undefined}
+                  style={{ fontFamily: 'monospace', fontSize: 12 }}
+                  onChange={(e) => setSecretJson(sIdx, e.target.value)}
+                />
+                <div style={{ height: 18, lineHeight: '18px' }}>
+                  {s!.error && <Text type="danger" style={{ fontSize: 12 }}>{s!.error}</Text>}
+                </div>
+              </div>
+            )}
+          </Space>
+        </div>
+      )
+    })
+  }
 
   return (
     <>
@@ -331,7 +862,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
         </Button>
       </Tooltip>
       <Modal
-        open={bundle !== null && (decisions.length > 0 || connFixes.length > 0)}
+        open={bundle !== null && (decisions.length > 0 || connFixes.length > 0 || secretFills.length > 0)}
         title={t(decisions.length > 0
           ? 'mcp_transfer_conflict_title'
           : 'mcp_transfer_conn_only_title')}
@@ -341,7 +872,14 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
         onOk={onConfirm}
         onCancel={closeModal}
       >
-        {decisions.length > 0 && (
+        {/* 外部连接:按连接聚合——每条一块,冲突处理与其鉴权框在一起,
+            选跳过则不显示任何输入项(见 renderConnBlocks)。 */}
+        {path === '/mcp-external-connections' ? (
+          <>
+            <p><Text type="secondary">{t('mcp_transfer_conn_aggregate_hint')}</Text></p>
+            <div style={{ maxHeight: 380, overflow: 'auto' }}>{renderConnBlocks()}</div>
+          </>
+        ) : decisions.length > 0 && (
           <>
             <p><Text type="secondary">{t('mcp_transfer_conflict_hint')}</Text></p>
             <div style={{ maxHeight: 300, overflow: 'auto' }}>
@@ -424,7 +962,37 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
             </div>
           </>
         )}
+        {/* Server bundle's carried connections that need auth (A-段). */}
+        {path === '/mcp-servers' && secretFills.length > 0 && (
+          <>
+            <p style={{ marginTop: (decisions.length > 0 || connFixes.length > 0) ? 16 : 0, marginBottom: 4 }}>
+              <Text type="secondary">{t('mcp_transfer_carried_conn_hint')}</Text>
+            </p>
+            <div style={{ maxHeight: 300, overflow: 'auto' }}>
+              {secretFills.map((s, idx) => (
+                <div key={s.connCode} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                  <Space direction="vertical" style={{ width: '100%' }} size={4}>
+                    <Text code>{s.connCode}</Text>
+                    <Input.TextArea
+                      rows={Math.min(8, (s.json.match(/\n/g)?.length || 0) + 1)}
+                      value={s.json}
+                      status={s.error ? 'error' : undefined}
+                      style={{ fontFamily: 'monospace', fontSize: 12 }}
+                      onChange={(e) => setSecretJson(idx, e.target.value)}
+                    />
+                    {s.error && <Text type="danger" style={{ fontSize: 12 }}>{s.error}</Text>}
+                  </Space>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
       </Modal>
+      <ServerImportResultModal
+        data={srvResult}
+        onClose={() => setSrvResult(null)}
+        onContinue={() => { setSrvResult(null); pickFile() }}
+      />
     </>
   )
 }
