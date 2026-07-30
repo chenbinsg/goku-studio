@@ -508,6 +508,19 @@ def list_agent_skills(user = Depends(get_current_user)):
     }
 
 
+@router.get("/skills/{skill_id}/content")
+def get_agent_skill_content(skill_id: str, user = Depends(get_current_user)):
+    """Full SKILL.md text for one built-in file skill (the list endpoint only
+    exposes name/description). Restricted to discovered skill ids — never build a
+    path from arbitrary input (path-traversal guard)."""
+    if skill_id not in _valid_skill_ids():
+        raise HTTPException(status_code=404, detail="Skill not found")
+    skill_md = _skills_root() / skill_id / "SKILL.md"
+    if not skill_md.exists():
+        raise HTTPException(status_code=404, detail="Skill content not found")
+    return {"id": skill_id, "content": skill_md.read_text(encoding="utf-8", errors="ignore")}
+
+
 def _agent_access_filter(query, user, db):
     """Apply access control to an AgentDefinition query.
 

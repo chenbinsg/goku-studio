@@ -640,6 +640,7 @@ export const agentApi = {
   delete: (id: string) => api.delete<{ success: boolean }>(`/agents/${id}`),
   baseTypes: () => api.get<{ agent_types: any[] }>('/agents/base-types'),
   skills: () => api.get<{ root: string; skills: any[] }>('/agents/skills'),
+  skillContent: (id: string) => api.get<{ id: string; content: string }>(`/agents/skills/${id}/content`),
   // Favorites
   toggleFavorite: (agentId: string) =>
     api.post<{ favorited: boolean; agent_id: string }>(`/agents/${agentId}/favorite`),

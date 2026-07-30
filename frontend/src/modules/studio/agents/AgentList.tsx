@@ -190,6 +190,9 @@ const AgentList: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [uploadingFigure, setUploadingFigure] = useState(false)
+  // 查看内置文件 skill 的 SKILL.md 全文
+  const [skillView, setSkillView] = useState<{ id: string; name: string; content: string } | null>(null)
+  const [skillViewLoading, setSkillViewLoading] = useState(false)
   const [importingAgent, setImportingAgent] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [detailVisible, setDetailVisible] = useState(false)
@@ -320,6 +323,20 @@ const AgentList: React.FC = () => {
       setSkillOptions(data.skills || [])
     } catch {
       // ignore
+    }
+  }
+
+  const openSkillContent = async (skill: SkillOption) => {
+    setSkillView({ id: skill.id, name: skill.name || skill.id, content: '' })
+    setSkillViewLoading(true)
+    try {
+      const res = await agentApi.skillContent(skill.id)
+      setSkillView({ id: skill.id, name: skill.name || skill.id, content: res.content || '' })
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '加载技能内容失败')
+      setSkillView(null)
+    } finally {
+      setSkillViewLoading(false)
     }
   }
 
@@ -1235,7 +1252,10 @@ const AgentList: React.FC = () => {
                             <div style={{ marginTop: 4, display: 'grid', gap: 8 }}>
                               {selected.map(skill => (
                                 <div key={skill.id}>
-                                  <Tag color="blue" style={{ marginBottom: 4 }}>{skill.name || skill.id}</Tag>
+                                  <Space size={4} align="center">
+                                    <Tag color="blue" style={{ marginBottom: 4 }}>{skill.name || skill.id}</Tag>
+                                    <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => openSkillContent(skill)}>查看</Button>
+                                  </Space>
                                   <div style={{ fontSize: 12, color: '#666', lineHeight: 1.5 }}>{skill.description}</div>
                                   <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{skill.path}</div>
                                 </div>
@@ -1245,6 +1265,23 @@ const AgentList: React.FC = () => {
                         )
                       }}
                     </Form.Item>
+
+                    <Modal
+                      open={!!skillView}
+                      title={skillView ? `技能内容 · ${skillView.name}` : '技能内容'}
+                      footer={null}
+                      width={760}
+                      onCancel={() => setSkillView(null)}
+                      destroyOnClose
+                    >
+                      {skillViewLoading ? (
+                        <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
+                      ) : (
+                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '70vh', overflow: 'auto', fontSize: 12, lineHeight: 1.6, background: '#fafafa', padding: 12, borderRadius: 6, margin: 0 }}>
+                          {skillView?.content}
+                        </pre>
+                      )}
+                    </Modal>
                   </div>
                 ),
               },

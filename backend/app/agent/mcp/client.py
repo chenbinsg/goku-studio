@@ -115,7 +115,9 @@ class MCPServerConnection:
                 {
                     "name": t.name,
                     "description": getattr(t, "description", "") or "",
-                    "inputSchema": getattr(t, "inputSchema", {}) or {},
+                    # mcp 1.x: t.inputSchema; mcp 2.x: t.input_schema. Try both,
+                    # else the synced capability gets an empty {} schema.
+                    "inputSchema": getattr(t, "input_schema", None) or getattr(t, "inputSchema", None) or {},
                 }
                 for t in response.tools
             ]

@@ -846,9 +846,16 @@ class SyncResult:
 
 
 def _attr(obj: object, name: str, default=None):
-    """Pull a field off an MCP SDK object regardless of whether it's a
-    Pydantic model or a plain dataclass. Returns ``default`` for None."""
-    v = getattr(obj, name, default)
+    """Pull a field off an MCP SDK object regardless of whether it's a Pydantic
+    model or a plain dataclass, and regardless of camelCase (mcp 1.x, e.g.
+    ``inputSchema``/``mimeType``/``resourceTemplates``) vs snake_case (mcp 2.x,
+    e.g. ``input_schema``/``mime_type``/``resource_templates``). Returns
+    ``default`` for None."""
+    v = getattr(obj, name, None)
+    if v is None:
+        snake = "".join("_" + c.lower() if c.isupper() else c for c in name)
+        if snake != name:
+            v = getattr(obj, snake, None)
     return v if v is not None else default
 
 
@@ -1107,7 +1114,7 @@ async def _sync_resource_templates(
         )
     try:
         upstream = await conn.session.list_resource_templates()
-        items = list(upstream.resourceTemplates)
+        items = list(_attr(upstream, "resourceTemplates", []) or [])
     except Exception as e:
         if _is_method_not_found(e):
             return CapabilityBucketResult(
@@ -1121,7 +1128,7 @@ async def _sync_resource_templates(
             "mcp resource templates discovered (server=%s, count=%d) — persistence "
             "not yet implemented; first template uriTemplate=%r",
             server.code, len(items),
-            getattr(items[0], "uriTemplate", None),
+            _attr(items[0], "uriTemplate", None),
         )
     return CapabilityBucketResult(
         kind="resource_templates", ok=True, error=None,
