@@ -16,6 +16,16 @@ class MemoryUpdate(BaseModel):
     ttl: Optional[int] = None
 
 
+class MemoryBulkDelete(BaseModel):
+    """Bulk-delete selector. Provide `ids` for an explicit set (used by
+    'delete selected' / 'delete this page'), or set `all=True` to delete every
+    memory matching the optional `type`/`tag` filter ('delete all')."""
+    ids: Optional[List[str]] = None
+    type: Optional[str] = None
+    tag: Optional[str] = None
+    all: bool = False
+
+
 @router.get("")
 def list_memories(
     type: Optional[str] = None,
@@ -240,6 +250,71 @@ def update_memory(
         "ttl": m.ttl,
         "created_at": m.created_at,
     }
+
+
+@router.post("/bulk-delete")
+def bulk_delete_memories(
+    payload: MemoryBulkDelete,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    """Delete many memories in one call. Mirror of core (studio/core 双份同改).
+
+    - Pass `ids` to delete a specific set (selected rows / current page).
+    - Pass `all=true` (optionally with `type` and/or `tag`) to delete every
+      memory matching the filter.
+
+    Non-superusers can only delete their own memories (or user-less ones).
+    Vector embeddings are removed best-effort. Refuses to run when neither
+    `ids` nor `all` is supplied, so an empty request can never wipe the store.
+    """
+    if not payload.ids and not payload.all:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide `ids` or set `all=true` (optionally with type/tag).",
+        )
+
+    query = db.query(models.Memory)
+    if not current_user.is_superuser:
+        query = query.filter(
+            (models.Memory.user_id == current_user.id) | (models.Memory.user_id == None)  # noqa: E711
+        )
+
+    if payload.ids:
+        query = query.filter(models.Memory.id.in_(payload.ids))
+    else:  # all=True
+        if payload.type:
+            query = query.filter(models.Memory.type == payload.type)
+        if payload.tag:
+            query = query.filter(models.Memory.tags.contains([payload.tag]))
+
+    rows = query.all()
+    vector_ids = [m.vector_id for m in rows if m.vector_id]
+    ids = [m.id for m in rows]
+    deleted = len(rows)
+
+    for m in rows:
+        db.delete(m)
+    db.commit()
+
+    auth.log_audit_action(
+        db, current_user.id, "bulk_delete_memory", "memory", None,
+        {"deleted": deleted, "mode": "ids" if payload.ids else "all",
+         "type": payload.type, "tag": payload.tag},
+    )
+
+    if vector_ids:
+        try:
+            from app.services import vector_store as vs
+            for vid in vector_ids:
+                try:
+                    vs.delete(vid)
+                except Exception:
+                    pass  # best-effort per-vector cleanup
+        except Exception:
+            pass  # vector store unavailable — DB rows already gone
+
+    return {"deleted": deleted, "ids": ids}
 
 
 @router.delete("/{memory_id}", status_code=204)

@@ -47,6 +47,15 @@ class SearchRequest(BaseModel):
     approved_only: bool = False
 
 
+class AutoSkillBulkDelete(BaseModel):
+    """Bulk-delete selector. Provide `ids` for an explicit set (used by
+    'delete selected' / 'delete this page'), or set `all=True` to delete every
+    auto-skill matching the optional `approval_status` filter ('delete all')."""
+    ids:             Optional[list[str]] = None
+    approval_status: Optional[str]       = None   # pending | approved | rejected
+    all:             bool                = False
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _skill_or_404(skill_id: str, db: Session) -> AutoSkill:
@@ -176,6 +185,59 @@ def update_skill(skill_id: str, payload: AutoSkillUpdate, db: Session = Depends(
     db.commit()
     db.refresh(s)
     return _to_out(s)
+
+
+@router.post("/bulk-delete")
+def bulk_delete_skills(payload: AutoSkillBulkDelete, db: Session = Depends(get_db), user=Depends(get_current_user)):
+    """Delete many auto-skills in one call. Mirror of core (studio/core 双份同改).
+
+    - Pass `ids` to delete a specific set (selected rows / current page).
+    - Pass `all=true` (optionally with `approval_status`) to delete every match.
+
+    Approved skills promoted to the git skills-repo are removed best-effort.
+    Refuses to run when neither `ids` nor `all` is supplied.
+    """
+    if not payload.ids and not payload.all:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide `ids` or set `all=true` (optionally with approval_status).",
+        )
+
+    q = db.query(AutoSkill)
+    if payload.ids:
+        q = q.filter(AutoSkill.id.in_(payload.ids))
+    elif payload.approval_status:  # all=True + optional status filter
+        q = q.filter(AutoSkill.approval_status == payload.approval_status)
+
+    rows = q.all()
+    deleted_ids = [s.id for s in rows]
+    approved_names = [
+        s.name for s in rows
+        if getattr(s, "approval_status", None) == "approved" or s.is_approved
+    ]
+    deleted = len(rows)
+
+    for s in rows:
+        db.delete(s)
+    db.commit()
+
+    git_removed = 0
+    try:
+        from app.services import skills_repo
+        if skills_repo.is_enabled():
+            for name in approved_names:
+                try:
+                    skills_repo.remove_skill(
+                        skills_repo.auto_skill_id(name),
+                        message=f"bulk-delete auto-skill: {name} (by {getattr(user, 'username', 'studio')})",
+                    )
+                    git_removed += 1
+                except Exception:
+                    pass  # per-skill git cleanup is best-effort
+    except Exception:
+        pass  # skills-repo unavailable — DB rows already gone
+
+    return {"deleted": deleted, "ids": deleted_ids, "git_removed": git_removed}
 
 
 @router.delete("/{skill_id}")

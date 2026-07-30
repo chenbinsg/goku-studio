@@ -7,6 +7,7 @@ can call MCP operations without async/await propagation.
 """
 import asyncio
 import logging
+import os
 import threading
 from contextlib import AsyncExitStack
 from typing import Any, Dict, List, Optional
@@ -205,6 +206,20 @@ class MCPClientManager:
         self._connections: Dict[str, MCPServerConnection] = {}
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._loop_thread: Optional[threading.Thread] = None
+        # Per-server pool of EXTRA connections (beyond the primary in
+        # _connections). A single MCP session serializes its own requests, so
+        # concurrent calls to one server would queue and the queued ones hit the
+        # sync timeout. Handing each concurrent call its own connection lets them
+        # run in parallel (the server handles concurrency fine). Lazily grown,
+        # capped per server; unused connections stay warm for reuse.
+        self._pool: Dict[str, list] = {}
+        self._pool_lock = threading.Lock()
+        self._MAX_CONNS_PER_SERVER = 4
+        # Sync wait for a single tool call. The default 60s was too tight for a
+        # slow ES cluster (heavy query_string scans run 20–60s) — a query that
+        # would finish at ~65s got killed, the agent then re-split and dropped
+        # days. Configurable; raised to give slow-but-completing calls headroom.
+        self._call_timeout = int(os.getenv("MCP_CALL_TIMEOUT_SECS", "120"))
 
     def _get_loop(self) -> asyncio.AbstractEventLoop:
         """Get or create the dedicated background event loop."""
@@ -222,6 +237,44 @@ class MCPClientManager:
         loop = self._get_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return future.result(timeout=timeout)
+
+    def _checkout_conn(self, server_name: str):
+        """Hand out an idle, connected connection for this server, marked busy.
+
+        Candidates = the primary (``_connections``) + any pooled extras. If all
+        are busy and we're under the per-server cap, spin up a fresh connection
+        (outside the lock — connecting blocks). Returns ``None`` if no primary
+        exists or growth failed; the caller then falls back to the primary
+        (which may serialize, but never fails just because the pool is full)."""
+        prim = self._connections.get(server_name)
+        if prim is None:
+            return None
+        with self._pool_lock:
+            pool = self._pool.setdefault(server_name, [])
+            for c in [prim] + pool:
+                if getattr(c, "connected", False) and not getattr(c, "_busy", False):
+                    c._busy = True
+                    return c
+            grow = (1 + len(pool)) < self._MAX_CONNS_PER_SERVER
+        if not grow:
+            return None
+        try:
+            fresh = MCPServerConnection(prim.config)
+            self._run_async(fresh.connect(), timeout=30)
+            if fresh.connected:
+                fresh._busy = True
+                with self._pool_lock:
+                    self._pool.setdefault(server_name, []).append(fresh)
+                return fresh
+        except Exception as e:
+            logger.warning("MCP pool grow failed for '%s': %s", server_name, e)
+        return None
+
+    @staticmethod
+    def _checkin_conn(conn) -> None:
+        """Return a checked-out connection to the pool (mark idle)."""
+        if conn is not None:
+            conn._busy = False
 
     # ── Server lifecycle ──────────────────────────────────────────────────
 
@@ -306,23 +359,33 @@ class MCPClientManager:
         if conn is None:
             return {"error": f"MCP server '{server_name}' not connected"}
 
-        if conn.connected:
-            result = self._run_async(conn.call_tool(tool_name, arguments))
-            if not result.get("error"):
-                return result  # success or tool-logic failure — do not retry
-            logger.warning(
-                "MCP transport error on '%s.%s'; attempting reconnect + retry",
-                server_name, tool_name,
-            )
+        # Borrow a free connection from the pool so concurrent calls to this
+        # server run in parallel instead of serializing on one session. Falls
+        # back to the primary when the pool is full/unavailable. Always returned.
+        pooled = self._checkout_conn(server_name)
+        use = pooled if pooled is not None else conn
+        try:
+            if use.connected:
+                result = self._run_async(use.call_tool(tool_name, arguments), timeout=self._call_timeout)
+                if not result.get("error"):
+                    return result  # success or tool-logic failure — do not retry
+                logger.warning(
+                    "MCP transport error on '%s.%s'; attempting reconnect + retry",
+                    server_name, tool_name,
+                )
+            return self._reconnect_and_retry(server_name, conn, tool_name, arguments)
+        finally:
+            self._checkin_conn(pooled)
 
-        # Reconnect once from the stored config and retry.
+    def _reconnect_and_retry(self, server_name, conn, tool_name, arguments) -> Dict[str, Any]:
+        # Reconnect once from the stored config and retry (on the primary).
         try:
             fresh = MCPServerConnection(conn.config)
             self._run_async(fresh.connect())
             if fresh.connected:
                 self._connections[server_name] = fresh
                 logger.info("MCP server '%s' reconnected; retrying '%s'", server_name, tool_name)
-                return self._run_async(fresh.call_tool(tool_name, arguments))
+                return self._run_async(fresh.call_tool(tool_name, arguments), timeout=self._call_timeout)
             logger.warning("MCP server '%s' reconnect failed (endpoint down?)", server_name)
         except Exception as e:
             logger.warning("MCP reconnect+retry failed for '%s': %s", server_name, e)

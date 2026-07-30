@@ -23,6 +23,7 @@ go through :func:`check_principal_authorization` /
 """
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import time
 import uuid
@@ -1112,7 +1113,15 @@ def invoke_principal_via_mcp(
             error_msg = str(response.get("output", ""))[:1000] or "capability reported failure"
     except Exception as e:
         result, error_type = "failed", "exception"
-        error_msg = str(e)[:1000]
+        # A future timeout (heavy/slow MCP call exceeding the sync wait) raises
+        # concurrent.futures.TimeoutError whose str() is EMPTY — that empty
+        # message becomes {"error": ""}, which downstream reads as falsy and
+        # mislabels the call as ok/blank (model then fabricates or guesses).
+        # State the fact (it timed out); never emit an empty error message.
+        if isinstance(e, (concurrent.futures.TimeoutError, TimeoutError)):
+            error_msg = "MCP_CALL_TIMEOUT:超时未返回结果(超时,非无数据)"
+        else:
+            error_msg = str(e)[:1000] or type(e).__name__
         response = {"error": error_msg}
 
     duration_ms = int((time.monotonic() - started) * 1000)
