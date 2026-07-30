@@ -70,3 +70,38 @@ async def post_to_core(request: Request, path: str, json_body: dict | None = Non
         raise HTTPException(status_code=resp.status_code, detail=detail)
 
     return resp.json()
+
+
+async def put_to_core(request: Request, path: str, json_body: dict | None = None) -> dict:
+    """PUT ``path`` to goku-core. Same relay semantics as :func:`post_to_core`
+    (auth header forwarded, 2xx JSON returned, core error status/detail relayed,
+    502 when core is unreachable). Used for writes that must run in core — e.g.
+    a capability ``result-script`` (the sandbox lives in core)."""
+    url = settings.CORE_API_URL.rstrip("/") + path
+    headers = {}
+    authorization = request.headers.get("authorization")
+    if authorization:
+        headers["Authorization"] = authorization
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.CORE_API_TIMEOUT_SECS) as client:
+            resp = await client.put(url, json=json_body, headers=headers)
+    except httpx.RequestError as exc:
+        logger.warning("goku-core runtime unreachable at %s: %s", url, exc)
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"无法连接 goku-core runtime（{settings.CORE_API_URL}）：{exc}。"
+                f"该写操作由 runtime 执行，请确认 goku-core 服务已启动，"
+                f"或通过环境变量 CORE_API_URL 指向正确地址。"
+            ),
+        ) from exc
+
+    if resp.status_code >= 400:
+        try:
+            detail = resp.json().get("detail", resp.text[:500])
+        except ValueError:
+            detail = resp.text[:500]
+        raise HTTPException(status_code=resp.status_code, detail=detail)
+
+    return resp.json()

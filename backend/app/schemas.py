@@ -987,6 +987,8 @@ class MCPCapabilityListItem(BaseModel):
     input_params: list[str] = Field(default_factory=list)
     status: str
     authorization_mode: str = "required"
+    # User-authored sandboxed result post-processor (runtime in goku-core).
+    result_script: str | None = None
     # Total + rate quota — surfaced on the 能力 list so the quota editor
     # (which lives on the 能力 Tab) can pre-fill without an extra fetch.
     quota_enabled: bool = False
@@ -1211,6 +1213,15 @@ class MCPCapabilitySchemaOverridesUpdate(BaseModel):
     """
 
     params: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+
+class MCPCapabilityResultScriptUpdate(BaseModel):
+    """Body for ``PUT …/capabilities/{id}/result-script`` — Python source that
+    defines ``def process(result): ...``. Studio relays it to goku-core, which
+    static-checks + stores it and runs it sandboxed at invocation time.
+    Empty/None clears it."""
+
+    script: str | None = None
 
 
 # ── MCP Capability ↔ Principal authorizations ──────────────────────────

@@ -121,6 +121,7 @@ def _capability_to_list_item(c: MCPCapability) -> MCPCapabilityListItem:
         input_params=_input_param_summary(c.input_schema),
         status=c.status,
         authorization_mode=c.authorization_mode or "required",
+        result_script=c.result_script,
         quota_enabled=bool(c.quota_enabled),
         quota_period=c.quota_period,
         quota_limit=c.quota_limit,

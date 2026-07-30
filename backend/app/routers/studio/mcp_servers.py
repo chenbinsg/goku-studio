@@ -41,6 +41,7 @@ from app.schemas import (
     MCPCapabilityBlacklistListResponse,
     MCPCapabilityQuotaConfig,
     MCPCapabilitySchemaOverridesUpdate,
+    MCPCapabilityResultScriptUpdate,
     MCPCapabilityQuotaUpdate,
     MCPChangeLogListResponse,
     MCPConnectionTestResult,
@@ -415,6 +416,43 @@ def update_capability_schema_overrides(
     if _server is not None:
         _srv_svc._trigger_runtime_refresh(_server.code, request)
     return detail
+
+
+@router.put("/{server_id}/capabilities/{capability_id}/result-script")
+async def update_capability_result_script(
+    server_id: str,
+    capability_id: str,
+    payload: MCPCapabilityResultScriptUpdate,
+    request: Request,
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> dict:
+    """Set/clear a capability's sandboxed ``result_script``. Relayed to goku-core:
+    the sandbox (static check at save + RestrictedPython/subprocess at runtime)
+    lives there. Core writes the shared DB and returns the updated detail; the
+    raw JSON is passed through unchanged (no re-validation against Studio's
+    schema, which may drift from core's)."""
+    return await core_runtime_proxy.put_to_core(
+        request,
+        f"/api/v1/mcp-servers/{server_id}/capabilities/{capability_id}/result-script",
+        {"script": payload.script},
+    )
+
+
+@router.post("/{server_id}/apply-capability-config")
+async def apply_imported_capability_config(
+    server_id: str,
+    body: dict,
+    request: Request,
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> dict:
+    """Relay to goku-core: overlay imported per-capability config
+    (result_script / schema_overrides) onto this server's synced capabilities,
+    matched by capability_name. Body: ``{"capabilities": [...]}``."""
+    return await core_runtime_proxy.post_to_core(
+        request,
+        f"/api/v1/mcp-servers/{server_id}/apply-capability-config",
+        body,
+    )
 
 
 @router.post("/{server_id}/capabilities/{capability_id}/disable")

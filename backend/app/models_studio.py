@@ -292,6 +292,10 @@ class MCPCapability(Base):
     # Admin-curated schema patch layer (holes-only merge + fingerprint
     # quarantine — see services/mcp_schema_overrides.py)
     schema_overrides   = Column(JSON,        nullable=True)
+    # User-authored, sandboxed result post-processor. Written here (shared DB);
+    # the sandbox actually runs in goku-core at invocation time. Studio only
+    # reads/relays it — the write goes to core (see the result-script route).
+    result_script      = Column(Text,        nullable=True)
     status             = Column(String(20),  default="active", server_default="active", nullable=False)
     quota_enabled      = Column(Boolean,     default=False, server_default="0", nullable=False)
     quota_limit        = Column(Integer,     nullable=True)
