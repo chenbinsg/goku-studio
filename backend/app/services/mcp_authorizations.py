@@ -744,6 +744,38 @@ def delete_authorization(
     )
 
 
+def revoke_all_for_principal(
+    db: Session, principal_type: str, principal_id: str,
+    *, user_id: Optional[str] = None,
+) -> int:
+    """Soft-delete every non-deleted MCP capability authorization granted to a
+    principal — used when the principal itself is deleted (e.g. an agent).
+
+    These rows are keyed by ``(principal_type, principal_id)`` with no FK to the
+    principal, so deleting the agent leaves them orphaned; worse, a new agent
+    reusing the same id would inherit the old grants. Soft-delete (deleted_at)
+    revokes them while keeping call-log history resolvable.
+
+    Does NOT commit — the caller commits so this stays atomic with the
+    principal's own deletion. Returns the number revoked.
+    """
+    now = datetime.utcnow()
+    rows = (
+        db.query(MCPCapabilityAuthorization)
+        .filter(
+            MCPCapabilityAuthorization.principal_type == principal_type,
+            MCPCapabilityAuthorization.principal_id == principal_id,
+            MCPCapabilityAuthorization.deleted_at.is_(None),
+        )
+        .all()
+    )
+    for a in rows:
+        a.deleted_at = now
+        a.updated_by = user_id
+        a.updated_at = now
+    return len(rows)
+
+
 def _validate_quota_for_write(
     db: Session, cap: MCPCapability,
     allocated: Optional[int], period: Optional[str],

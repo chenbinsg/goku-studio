@@ -1342,6 +1342,12 @@ def delete_agent(
     agent_name = agent.name
     agent_slug = getattr(agent, "slug", None)
     auth.log_audit_action(db, user.id, "delete_agent", "agent", agent.id, {"name": agent_name})
+    # Revoke the agent's MCP capability authorizations too — they're keyed by
+    # (principal_type='agent', principal_id) with no FK to the agent, so a plain
+    # delete leaves them orphaned (and a new agent reusing the id would inherit
+    # the old grants). Soft-delete them in THIS transaction before the agent goes.
+    from app.services import mcp_authorizations as _mcp_authz
+    _mcp_authz.revoke_all_for_principal(db, "agent", agent_id, user_id=user.id)
     db.delete(agent)
     db.commit()
     # Remove seed file so the agent is not re-imported on next deploy

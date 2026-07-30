@@ -1007,7 +1007,7 @@ const CapabilityManageDrawer: React.FC<{
       render: (v: number) => v ?? 0 },
     { title: t('mcp_detail_mgr_authz_col_period'), dataIndex: 'quota_period', key: 'period', width: 80,
       render: (v?: string | null) => v ? periodLabel(v) : '-' },
-    { title: t('mcp_detail_mgr_authz_col_actions'), key: 'act', width: 180,
+    { title: t('mcp_detail_mgr_authz_col_actions'), key: 'act', width: 220, fixed: 'right' as const,
       render: (_: any, r: AuthorizationItem) => (
         <Space size="small">
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>{t('mcp_detail_mgr_authz_edit')}</Button>
@@ -1207,7 +1207,7 @@ const CapabilityManageDrawer: React.FC<{
             <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openCreate}>{t('mcp_detail_mgr_authz_add')}</Button>
           </div>
           <Table rowKey="authorization_id" size="small" dataSource={authz} columns={authzColumns}
-            pagination={false} scroll={{ x: 720 }}
+            pagination={false} scroll={{ x: 760 }}
             locale={{ emptyText: <Empty description={t('mcp_detail_mgr_authz_empty')} /> }} />
         </>
       ),
