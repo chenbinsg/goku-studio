@@ -311,6 +311,8 @@ export const memoryApi = {
   list: (params?: { type?: string; page?: number; size?: number }) =>
     api.get<{ total: number; items: any[] }>('/memory', { params }),
   delete: (id: string) => api.delete<void>(`/memory/${id}`),
+  bulkDelete: (body: { ids?: string[]; type?: string; tag?: string; all?: boolean }) =>
+    api.post<{ deleted: number; ids: string[] }>('/memory/bulk-delete', body),
   timeline: (params?: { page?: number; size?: number; domain?: string }) =>
     api.get<{ total: number; items: any[]; domain_counts: Record<string, number> }>('/memory/timeline', { params }),
   consolidate: () =>
@@ -802,6 +804,8 @@ export const autoSkillApi = {
     api.patch<any>(`/auto-skills/${id}`, data),
   approve: (id: string) => api.post<any>(`/auto-skills/${id}/approve`),
   delete: (id: string) => api.delete<{ success: boolean }>(`/auto-skills/${id}`),
+  bulkDelete: (body: { ids?: string[]; approval_status?: string; all?: boolean }) =>
+    api.post<{ deleted: number; ids: string[]; git_removed: number }>('/auto-skills/bulk-delete', body),
   search: (data: { query: string; top_k?: number }) =>
     api.post<{ items: any[] }>('/auto-skills/search', data),
 }

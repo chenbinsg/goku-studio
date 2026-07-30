@@ -84,6 +84,8 @@ const MemoryList: React.FC = () => {
   const [typeFilter, setTypeFilter] = useState<string | undefined>(undefined)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const [form] = Form.useForm()
 
   // ── Timeline state ────────────────────────────────────────────────────────
@@ -196,6 +198,41 @@ const MemoryList: React.FC = () => {
       message.error(t('memory_list_search_failure'))
     }
   }
+
+  // Bulk delete: by explicit ids (selected rows / current page) or all (filtered)
+  const runBulkDelete = async (
+    body: { ids?: string[]; type?: string; all?: boolean },
+  ) => {
+    setBulkDeleting(true)
+    try {
+      const res = await memoryApi.bulkDelete(body)
+      message.success(t('memory_bulk_deleted', { count: res.deleted }))
+      setSelectedRowKeys([])
+      // After deleting, current page may be empty — clamp back if needed
+      const remaining = total - (res.deleted || 0)
+      const lastPage = Math.max(1, Math.ceil(remaining / PAGE_SIZE))
+      const nextPage = Math.min(page, lastPage)
+      if (nextPage !== page) {
+        setPage(nextPage)
+      } else {
+        fetchMemories(nextPage, typeFilter)
+      }
+      if (searchResults.length) handleSearch()
+    } catch (error) {
+      message.error(t('memory_bulk_delete_failure'))
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
+  const handleDeleteSelected = () =>
+    runBulkDelete({ ids: selectedRowKeys.map(String) })
+
+  const handleDeletePage = () =>
+    runBulkDelete({ ids: memories.map((m) => m.id) })
+
+  const handleDeleteAll = () =>
+    runBulkDelete({ all: true, ...(typeFilter ? { type: typeFilter } : {}) })
 
   const columns: ColumnsType<MemoryRow> = useMemo(() => [
     {
@@ -408,12 +445,48 @@ const MemoryList: React.FC = () => {
               <Card
                 extra={
                   <Space wrap>
+                    <Popconfirm
+                      title={t('memory_delete_selected_confirm', { count: selectedRowKeys.length })}
+                      disabled={!selectedRowKeys.length || bulkDeleting}
+                      onConfirm={handleDeleteSelected}
+                    >
+                      <Button
+                        danger
+                        size="small"
+                        icon={<DeleteOutlined />}
+                        disabled={!selectedRowKeys.length}
+                        loading={bulkDeleting}
+                      >
+                        {t('memory_delete_selected', { count: selectedRowKeys.length })}
+                      </Button>
+                    </Popconfirm>
+                    <Popconfirm
+                      title={t('memory_delete_page_confirm', { count: memories.length })}
+                      disabled={!memories.length || bulkDeleting}
+                      onConfirm={handleDeletePage}
+                    >
+                      <Button size="small" disabled={!memories.length} loading={bulkDeleting}>
+                        {t('memory_delete_page')}
+                      </Button>
+                    </Popconfirm>
+                    <Popconfirm
+                      title={t('memory_delete_all_confirm', { count: total })}
+                      okText={t('memory_delete_all_ok')}
+                      okButtonProps={{ danger: true }}
+                      disabled={!total || bulkDeleting}
+                      onConfirm={handleDeleteAll}
+                    >
+                      <Button danger size="small" disabled={!total} loading={bulkDeleting}>
+                        {t('memory_delete_all')}
+                      </Button>
+                    </Popconfirm>
                     <Select
                       allowClear
                       value={typeFilter}
                       style={{ width: 120 }}
                       onChange={(value) => {
                         setPage(1)
+                        setSelectedRowKeys([])
                         setTypeFilter(value)
                       }}
                       options={[
@@ -432,6 +505,11 @@ const MemoryList: React.FC = () => {
                   loading={loading}
                   size="small"
                   scroll={{ x: 1100 }}
+                  rowSelection={{
+                    selectedRowKeys,
+                    onChange: setSelectedRowKeys,
+                    preserveSelectedRowKeys: true,
+                  }}
                   pagination={{
                     current: page,
                     pageSize: PAGE_SIZE,

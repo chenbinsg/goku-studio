@@ -58,6 +58,8 @@ const SkillList: React.FC = () => {
   const [pageSize] = useState(20)
   const [statusFilter, setStatusFilter] = useState<string>('')
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [bulkDeleting, setBulkDeleting] = useState(false)
 
   // Detail modal
   const [detailModal, setDetailModal] = useState<Skill | null>(null)
@@ -117,6 +119,39 @@ const SkillList: React.FC = () => {
       message.error(t('skill_list_delete_failure', 'Failed to delete skill'))
     }
   }
+
+  // Bulk delete: by explicit ids (selected rows / current page) or all (filtered)
+  const runBulkDelete = async (
+    body: { ids?: string[]; approval_status?: string; all?: boolean },
+  ) => {
+    setBulkDeleting(true)
+    try {
+      const res = await autoSkillApi.bulkDelete(body)
+      message.success(t('skill_bulk_deleted', { count: res.deleted, defaultValue: `Deleted ${res.deleted} skills` }))
+      setSelectedRowKeys([])
+      // After deleting, the current page may be empty — clamp back if needed
+      const remaining = total - (res.deleted || 0)
+      const lastPage = Math.max(1, Math.ceil(remaining / pageSize))
+      if (page > lastPage) {
+        setPage(lastPage)
+      } else {
+        fetchSkills()
+      }
+    } catch {
+      message.error(t('skill_bulk_delete_failure', 'Bulk delete failed'))
+    } finally {
+      setBulkDeleting(false)
+    }
+  }
+
+  const handleDeleteSelected = () =>
+    runBulkDelete({ ids: selectedRowKeys.map(String) })
+
+  const handleDeletePage = () =>
+    runBulkDelete({ ids: skills.map(s => s.id) })
+
+  const handleDeleteAll = () =>
+    runBulkDelete({ all: true, ...(statusFilter ? { approval_status: statusFilter } : {}) })
 
   const openEdit = (skill: Skill) => {
     setEditModal(skill)
@@ -329,7 +364,7 @@ const SkillList: React.FC = () => {
           <Select
             style={{ width: 140 }}
             value={statusFilter}
-            onChange={v => { setStatusFilter(v); setPage(1) }}
+            onChange={v => { setStatusFilter(v); setPage(1); setSelectedRowKeys([]) }}
             options={[
               { value: '', label: t('skill_filter_all', 'All Status') },
               { value: 'pending', label: t('skill_status_pending', 'Pending') },
@@ -340,6 +375,40 @@ const SkillList: React.FC = () => {
           <Button icon={<ReloadOutlined />} onClick={fetchSkills}>
             {t('skill_btn_refresh', 'Refresh')}
           </Button>
+          <Popconfirm
+            title={t('skill_delete_selected_confirm', { count: selectedRowKeys.length, defaultValue: `Delete ${selectedRowKeys.length} selected skills?` })}
+            disabled={!selectedRowKeys.length || bulkDeleting}
+            onConfirm={handleDeleteSelected}
+            okText={t('confirm_yes', 'Yes')}
+            cancelText={t('confirm_no', 'No')}
+          >
+            <Button danger icon={<DeleteOutlined />} disabled={!selectedRowKeys.length} loading={bulkDeleting}>
+              {t('skill_delete_selected', { count: selectedRowKeys.length, defaultValue: `Delete Selected (${selectedRowKeys.length})` })}
+            </Button>
+          </Popconfirm>
+          <Popconfirm
+            title={t('skill_delete_page_confirm', { count: skills.length, defaultValue: `Delete all ${skills.length} skills on this page?` })}
+            disabled={!skills.length || bulkDeleting}
+            onConfirm={handleDeletePage}
+            okText={t('confirm_yes', 'Yes')}
+            cancelText={t('confirm_no', 'No')}
+          >
+            <Button disabled={!skills.length} loading={bulkDeleting}>
+              {t('skill_delete_page', 'Delete Page')}
+            </Button>
+          </Popconfirm>
+          <Popconfirm
+            title={t('skill_delete_all_confirm', { count: total, defaultValue: `Delete ALL ${total} skills matching the current filter? This cannot be undone.` })}
+            okText={t('skill_delete_all_ok', 'Delete all')}
+            okButtonProps={{ danger: true }}
+            disabled={!total || bulkDeleting}
+            onConfirm={handleDeleteAll}
+            cancelText={t('confirm_no', 'No')}
+          >
+            <Button danger disabled={!total} loading={bulkDeleting}>
+              {t('skill_delete_all', 'Delete All')}
+            </Button>
+          </Popconfirm>
         </Space>
       </Card>
 
@@ -349,6 +418,11 @@ const SkillList: React.FC = () => {
           columns={columns}
           dataSource={skills}
           loading={loading}
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys,
+            preserveSelectedRowKeys: true,
+          }}
           locale={{ emptyText: <Empty description={t('skill_list_empty', 'No skills yet — they are auto-learned from completed tasks')} /> }}
           pagination={{
             current: page,
