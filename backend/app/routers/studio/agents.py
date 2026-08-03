@@ -521,6 +521,32 @@ def get_agent_skill_content(skill_id: str, user = Depends(get_current_user)):
     return {"id": skill_id, "content": skill_md.read_text(encoding="utf-8", errors="ignore")}
 
 
+class _SkillContentIn(BaseModel):
+    content: str
+
+
+@router.put("/skills/{skill_id}/content")
+def update_agent_skill_content(skill_id: str, body: _SkillContentIn, user = Depends(get_current_user)):
+    """Overwrite a built-in file skill's SKILL.md. Same path-traversal guard as the
+    GET (restricted to discovered skill ids). Backs up the previous content to
+    SKILL.md.bak first. Takes effect immediately — the executor re-reads the file
+    per task, so no restart is needed."""
+    if skill_id not in _valid_skill_ids():
+        raise HTTPException(status_code=404, detail="Skill not found")
+    skill_dir = _skills_root() / skill_id
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.exists():
+        raise HTTPException(status_code=404, detail="Skill content not found")
+    new_content = body.content or ""
+    try:  # best-effort backup so a bad edit is recoverable
+        prev = skill_md.read_text(encoding="utf-8", errors="ignore")
+        (skill_dir / "SKILL.md.bak").write_text(prev, encoding="utf-8")
+    except Exception:
+        pass
+    skill_md.write_text(new_content, encoding="utf-8")
+    return {"id": skill_id, "content": new_content, "bytes": len(new_content.encode("utf-8"))}
+
+
 def _agent_access_filter(query, user, db):
     """Apply access control to an AgentDefinition query.
 

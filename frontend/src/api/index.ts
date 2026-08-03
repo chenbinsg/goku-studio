@@ -643,6 +643,7 @@ export const agentApi = {
   baseTypes: () => api.get<{ agent_types: any[] }>('/agents/base-types'),
   skills: () => api.get<{ root: string; skills: any[] }>('/agents/skills'),
   skillContent: (id: string) => api.get<{ id: string; content: string }>(`/agents/skills/${id}/content`),
+  saveSkillContent: (id: string, content: string) => api.put<{ id: string; content: string; bytes: number }>(`/agents/skills/${id}/content`, { content }),
   // Favorites
   toggleFavorite: (agentId: string) =>
     api.post<{ favorited: boolean; agent_id: string }>(`/agents/${agentId}/favorite`),

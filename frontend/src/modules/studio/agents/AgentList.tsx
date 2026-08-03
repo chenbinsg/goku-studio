@@ -193,6 +193,9 @@ const AgentList: React.FC = () => {
   // 查看内置文件 skill 的 SKILL.md 全文
   const [skillView, setSkillView] = useState<{ id: string; name: string; content: string } | null>(null)
   const [skillViewLoading, setSkillViewLoading] = useState(false)
+  const [skillEditing, setSkillEditing] = useState(false)
+  const [skillDraft, setSkillDraft] = useState('')
+  const [skillSaving, setSkillSaving] = useState(false)
   const [importingAgent, setImportingAgent] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [detailVisible, setDetailVisible] = useState(false)
@@ -327,6 +330,8 @@ const AgentList: React.FC = () => {
   }
 
   const openSkillContent = async (skill: SkillOption) => {
+    setSkillEditing(false)
+    setSkillDraft('')
     setSkillView({ id: skill.id, name: skill.name || skill.id, content: '' })
     setSkillViewLoading(true)
     try {
@@ -1268,14 +1273,55 @@ const AgentList: React.FC = () => {
 
                     <Modal
                       open={!!skillView}
-                      title={skillView ? `技能内容 · ${skillView.name}` : '技能内容'}
-                      footer={null}
+                      title={skillView ? `技能内容 · ${skillView.name}${skillEditing ? '（编辑中）' : ''}` : '技能内容'}
                       width={760}
-                      onCancel={() => setSkillView(null)}
+                      onCancel={() => { setSkillView(null); setSkillEditing(false) }}
                       destroyOnClose
+                      footer={
+                        skillViewLoading ? null : (
+                          skillEditing ? [
+                            <Button key="cancel" onClick={() => { setSkillEditing(false); setSkillDraft('') }}>取消</Button>,
+                            <Button
+                              key="save"
+                              type="primary"
+                              loading={skillSaving}
+                              onClick={async () => {
+                                if (!skillView) return
+                                setSkillSaving(true)
+                                try {
+                                  await agentApi.saveSkillContent(skillView.id, skillDraft)
+                                  setSkillView({ ...skillView, content: skillDraft })
+                                  setSkillEditing(false)
+                                  message.success('已保存，下个任务即时生效')
+                                } catch (e: any) {
+                                  message.error(e?.response?.data?.detail || '保存失败')
+                                } finally {
+                                  setSkillSaving(false)
+                                }
+                              }}
+                            >保存</Button>,
+                          ] : [
+                            <Button key="close" onClick={() => setSkillView(null)}>关闭</Button>,
+                            <Button
+                              key="edit"
+                              type="primary"
+                              disabled={!skillView}
+                              onClick={() => { setSkillDraft(skillView?.content || ''); setSkillEditing(true) }}
+                            >编辑</Button>,
+                          ]
+                        )
+                      }
                     >
                       {skillViewLoading ? (
                         <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
+                      ) : skillEditing ? (
+                        <TextArea
+                          value={skillDraft}
+                          onChange={e => setSkillDraft(e.target.value)}
+                          autoSize={{ minRows: 20, maxRows: 32 }}
+                          spellCheck={false}
+                          style={{ fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace' }}
+                        />
                       ) : (
                         <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '70vh', overflow: 'auto', fontSize: 12, lineHeight: 1.6, background: '#fafafa', padding: 12, borderRadius: 6, margin: 0 }}>
                           {skillView?.content}
