@@ -56,6 +56,8 @@ class AgentDefinition(Base):
     channel_configs        = Column(JSON,        nullable=True)
     dlp_bypass             = Column(Boolean,     default=False, nullable=False)
     auto_send_drafts       = Column(Boolean,     default=False, nullable=False)
+    memory_enabled         = Column(Boolean,     default=True,  nullable=False)
+    auto_skill_enabled     = Column(Boolean,     default=True,  nullable=False)
     created_at             = Column(DateTime,    default=datetime.utcnow)
     updated_at             = Column(DateTime,    default=datetime.utcnow, onupdate=datetime.utcnow)
 

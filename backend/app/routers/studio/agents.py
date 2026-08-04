@@ -52,6 +52,8 @@ class AgentDefinitionCreate(BaseModel):
     allowed_channels: list[str] | None = None
     channel_configs: dict | None = None
     dlp_bypass: bool | None = None
+    memory_enabled: bool | None = None
+    auto_skill_enabled: bool | None = None
 
 
 class AgentDefinitionUpdate(BaseModel):
@@ -80,6 +82,8 @@ class AgentDefinitionUpdate(BaseModel):
     allowed_channels: list[str] | None = None
     channel_configs: dict | None = None
     dlp_bypass: bool | None = None
+    memory_enabled: bool | None = None
+    auto_skill_enabled: bool | None = None
 
 
 class AgentImportResult(BaseModel):
@@ -918,6 +922,8 @@ def create_agent(
         allowed_channels=data.allowed_channels,
         channel_configs=data.channel_configs,
         dlp_bypass=bool(data.dlp_bypass),
+        memory_enabled=True if data.memory_enabled is None else bool(data.memory_enabled),
+        auto_skill_enabled=True if data.auto_skill_enabled is None else bool(data.auto_skill_enabled),
         created_at=now,
         updated_at=now,
     )
@@ -1357,6 +1363,10 @@ def update_agent(
         agent.channel_configs = data.channel_configs
     if data.dlp_bypass is not None:
         agent.dlp_bypass = data.dlp_bypass
+    if data.memory_enabled is not None:
+        agent.memory_enabled = data.memory_enabled
+    if data.auto_skill_enabled is not None:
+        agent.auto_skill_enabled = data.auto_skill_enabled
     agent.updated_at = datetime.utcnow()
 
     db.commit()
@@ -1592,6 +1602,8 @@ def _serialize(agent) -> dict:
         "allowed_channels": agent.allowed_channels,
         "channel_configs": agent.channel_configs,
         "dlp_bypass": bool(getattr(agent, "dlp_bypass", False)),
+        "memory_enabled": bool(getattr(agent, "memory_enabled", True)),
+        "auto_skill_enabled": bool(getattr(agent, "auto_skill_enabled", True)),
         "created_at": agent.created_at.isoformat() if agent.created_at else None,
         "updated_at": agent.updated_at.isoformat() if agent.updated_at else None,
     }

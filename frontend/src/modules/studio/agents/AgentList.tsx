@@ -86,6 +86,8 @@ interface AgentDefinition {
   notification_channels?: { type: string; target: string }[]
   escalation_contact?: { type: string; target: string } | null
   dlp_bypass: boolean
+  memory_enabled?: boolean
+  auto_skill_enabled?: boolean
 }
 
 interface BaseType {
@@ -491,6 +493,8 @@ const AgentList: React.FC = () => {
       visibility: agent.visibility || 'department',
       allowed_roles: agent.allowed_roles || [],
       dlp_bypass: agent.dlp_bypass || false,
+      memory_enabled: agent.memory_enabled !== false,
+      auto_skill_enabled: agent.auto_skill_enabled !== false,
     })
     // Reset email config to defaults immediately so the tab never shows stale data
     // from a previously edited agent while the async fetch is in-flight (or if it fails).
@@ -1086,6 +1090,34 @@ const AgentList: React.FC = () => {
                         checkedChildren={t('agent_edit_dlp_switch_bypass')}
                         unCheckedChildren={t('agent_edit_dlp_switch_on')}
                         style={{ minWidth: 130 }}
+                      />
+                    </Form.Item>
+
+                    <Form.Item
+                      label={t('agent_edit_form_memory')}
+                      name="memory_enabled"
+                      valuePropName="checked"
+                      initialValue={true}
+                      tooltip={t('agent_edit_memory_tooltip')}
+                    >
+                      <Switch
+                        checkedChildren={t('agent_edit_switch_on')}
+                        unCheckedChildren={t('agent_edit_switch_off')}
+                        style={{ minWidth: 100 }}
+                      />
+                    </Form.Item>
+
+                    <Form.Item
+                      label={t('agent_edit_form_auto_skill')}
+                      name="auto_skill_enabled"
+                      valuePropName="checked"
+                      initialValue={true}
+                      tooltip={t('agent_edit_auto_skill_tooltip')}
+                    >
+                      <Switch
+                        checkedChildren={t('agent_edit_switch_on')}
+                        unCheckedChildren={t('agent_edit_switch_off')}
+                        style={{ minWidth: 100 }}
                       />
                     </Form.Item>
 
