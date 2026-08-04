@@ -20,7 +20,7 @@
  * deliberately absent from this page. Those belong in
  * "AI 能力 > 工具管理".
  */
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Card, Descriptions, Tag, Space, Button, Typography, Tabs, Table, Modal,
   Form, Input, Select, message, Row, Col, Statistic, DatePicker, Empty,
@@ -29,11 +29,13 @@ import {
 import {
   ThunderboltOutlined, SyncOutlined, EditOutlined, PoweroffOutlined,
   PlayCircleOutlined, ArrowLeftOutlined, ReloadOutlined, PlusOutlined,
+  ExportOutlined, ImportOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useTranslation } from 'react-i18next'
 import i18n from 'i18next'
 import { api } from '@/api'
+import { useAuthStore } from '@/stores/auth'
 import ServerDrawer, {
   STATUS_COLORS, HEALTH_COLORS, CAPABILITY_STATUS_COLORS,
   mcpStatusText, mcpHealthText, mcpCapabilityStatusText, mcpCategoryText, fmt,
@@ -345,6 +347,7 @@ interface MCPCapability {
   last_synced_at?: string | null
   last_called_at?: string | null
   result_script?: string | null
+  schema_overrides?: any
 }
 
 interface BlacklistEntry {
@@ -376,6 +379,10 @@ const CapabilitiesTab: React.FC<{
   const [error, setError] = useState<string | null>(null)
   // 每个能力一个「管理」抽屉:详情 / 授权模式 / 限额 / 授权调用方
   const [manageCap, setManageCap] = useState<MCPCapability | null>(null)
+  // 能力配置(result_script / schema_overrides)导入导出:多选 + 单行
+  const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([])
+  const [ioBusy, setIoBusy] = useState(false)
+  const importInputRef = useRef<HTMLInputElement>(null)
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -424,6 +431,74 @@ const CapabilitiesTab: React.FC<{
       message.error(e?.response?.data?.detail || t('mcp_detail_invoke_msg_error'))
     } finally {
       setInvokeBusy(false)
+    }
+  }
+
+  // ── 能力配置(result_script / schema_overrides)导出/导入 ──────────
+  // 导出:ids 传能力 id 列表(单行=一个;多选=勾选的;不传=全部有配置的)。
+  const exportConfigs = async (ids?: string[]) => {
+    setIoBusy(true)
+    try {
+      const qs = ids && ids.length ? `?ids=${encodeURIComponent(ids.join(','))}` : ''
+      const base = (import.meta as any).env?.VITE_API_URL || '/api/v1'
+      const token = useAuthStore.getState().token
+      const resp = await fetch(`${base}/mcp-servers/${serverId}/capabilities/export${qs}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      if (!resp.ok) {
+        let msg = t('mcp_cap_export_failed', { code: resp.status })
+        try { const j = await resp.json(); msg = j?.detail || msg } catch { /* not json */ }
+        message.error(msg); return
+      }
+      const bundle = await resp.json()
+      if (!bundle?.capabilities?.length) { message.warning(t('mcp_cap_export_empty')); return }
+      const cd = resp.headers.get('content-disposition') || ''
+      const m = cd.match(/filename="?([^"]+)"?/)
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = m ? m[1] : `mcp-caps-${serverId}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+      message.success(t('mcp_cap_export_success', { n: bundle.capabilities.length }))
+    } catch (e: any) {
+      message.error(e?.message || String(e))
+    } finally {
+      setIoBusy(false)
+    }
+  }
+
+  // 导入:读 JSON → 按 capability_name 匹配套用(后端 apply-capability-config)。
+  const importConfigsFromFile = async (file: File) => {
+    setIoBusy(true)
+    try {
+      const text = await file.text()
+      let parsed: any
+      try { parsed = JSON.parse(text) } catch { message.error(t('mcp_cap_import_bad_json')); return }
+      const capabilities = Array.isArray(parsed) ? parsed : parsed?.capabilities
+      if (!Array.isArray(capabilities) || !capabilities.length) {
+        message.error(t('mcp_cap_import_no_caps')); return
+      }
+      const res = await api.post<{ applied?: any[]; unmatched?: string[]; errors?: any[] }>(
+        `/mcp-servers/${serverId}/apply-capability-config`, { capabilities },
+      )
+      const nApplied = res.applied?.length || 0
+      if (nApplied) message.success(t('mcp_cap_import_applied', { n: nApplied }))
+      else message.warning(t('mcp_cap_import_none'))
+      if (res.unmatched?.length) {
+        message.warning(t('mcp_cap_import_unmatched', { names: res.unmatched.join('、') }))
+      }
+      if (res.errors?.length) {
+        message.error(t('mcp_cap_import_errors', {
+          names: res.errors.map((e: any) => e.capability_name || '').join('、'),
+        }))
+      }
+      reload()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || e?.message || String(e))
+    } finally {
+      setIoBusy(false)
     }
   }
 
@@ -483,7 +558,7 @@ const CapabilitiesTab: React.FC<{
     {
       title: t('mcp_detail_cap_col_actions'),
       key: 'actions',
-      width: 170,
+      width: 250,
       fixed: 'right' as const,
       render: (_: any, row: MCPCapability) => (
         <Space size="small">
@@ -498,6 +573,9 @@ const CapabilitiesTab: React.FC<{
             }}
           >{t('mcp_detail_cap_btn_invoke')}</Button>
           <Button size="small" onClick={() => setManageCap(row)}>{t('mcp_detail_cap_btn_manage')}</Button>
+          <Tooltip title={t('mcp_cap_export_row_tip')}>
+            <Button size="small" icon={<ExportOutlined />} onClick={() => exportConfigs([row.id])} />
+          </Tooltip>
         </Space>
       ),
     },
@@ -534,10 +612,42 @@ const CapabilitiesTab: React.FC<{
 
   return (
     <Spin spinning={loading}>
-      <Card title={t('mcp_detail_cap_card_title')} style={{ marginBottom: 12 }} extra={<Button size="small" icon={<ReloadOutlined />} onClick={reload}>{t('mcp_detail_refresh')}</Button>}>
+      <Card
+        title={t('mcp_detail_cap_card_title')}
+        style={{ marginBottom: 12 }}
+        extra={
+          <Space size="small">
+            <Button
+              size="small"
+              icon={<ExportOutlined />}
+              disabled={!selectedKeys.length}
+              loading={ioBusy}
+              onClick={() => exportConfigs(selectedKeys as string[])}
+            >{t('mcp_cap_export_selected', { n: selectedKeys.length })}</Button>
+            <Tooltip title={!caps.length ? t('mcp_cap_import_need_caps') : ''}>
+              <Button
+                size="small"
+                icon={<ImportOutlined />}
+                loading={ioBusy}
+                disabled={!caps.length}
+                onClick={() => importInputRef.current?.click()}
+              >{t('mcp_cap_import_btn')}</Button>
+            </Tooltip>
+            <Button size="small" icon={<ReloadOutlined />} onClick={reload}>{t('mcp_detail_refresh')}</Button>
+          </Space>
+        }
+      >
+        <input
+          ref={importInputRef}
+          type="file"
+          accept="application/json,.json"
+          style={{ display: 'none' }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) importConfigsFromFile(f); e.target.value = '' }}
+        />
         <Table
           rowKey="id"
           size="small"
+          rowSelection={{ selectedRowKeys: selectedKeys, onChange: setSelectedKeys }}
           dataSource={caps}
           columns={capColumns}
           pagination={false}

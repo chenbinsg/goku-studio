@@ -35,7 +35,7 @@ from fastapi import HTTPException, Request
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.models import MCPExternalConnection, MCPServer
+from app.models import MCPCapability, MCPExternalConnection, MCPServer
 from app.schemas import (
     MCPExternalConnectionCreate,
     MCPServerCreate,
@@ -113,11 +113,82 @@ def _decrypt_env(server: MCPServer) -> dict[str, str]:
         return {}
 
 
+def _server_capability_configs(db: Session, server_id: str) -> list[dict[str, Any]]:
+    """The admin-authored per-capability config that should travel with a server
+    export: the sandboxed ``result_script`` and the ``schema_overrides`` patch
+    layer, keyed by ``capability_name`` (the discover-stable identity used to
+    re-match on the target after a capability sync). Capabilities with neither
+    set carry nothing — only real overrides are exported."""
+    caps = (
+        db.query(MCPCapability)
+        .filter(
+            MCPCapability.server_id == server_id,
+            MCPCapability.status == "active",
+        )
+        .order_by(MCPCapability.capability_name)
+        .all()
+    )
+    out: list[dict[str, Any]] = []
+    for c in caps:
+        if c.result_script or c.schema_overrides:
+            out.append({
+                "capability_name": c.capability_name,
+                "result_script": c.result_script or None,
+                "schema_overrides": c.schema_overrides or None,
+            })
+    return out
+
+
+def export_capability_configs(
+    db: Session,
+    server_id: str,
+    *,
+    capability_ids: Optional[list[str]] = None,
+) -> dict[str, Any]:
+    """Export a server's per-capability admin config (``result_script`` /
+    ``schema_overrides``) as a standalone bundle, keyed by ``capability_name`` so
+    it re-matches on import via :func:`apply_capability_config`. ``capability_ids``
+    narrows to a selection (the capability-list page can export one or many);
+    ``None`` exports every capability that carries config. Only capabilities with
+    a real override are included — empties carry nothing. 404 if the server is
+    gone / soft-deleted."""
+    server = (
+        db.query(MCPServer)
+        .filter(MCPServer.id == server_id, MCPServer.deleted_at.is_(None))
+        .first()
+    )
+    if not server:
+        raise HTTPException(status_code=404, detail="找不到该 MCP 服务器")
+    q = db.query(MCPCapability).filter(
+        MCPCapability.server_id == server_id,
+        MCPCapability.status == "active",
+    )
+    if capability_ids:
+        q = q.filter(MCPCapability.id.in_(capability_ids))
+    caps = q.order_by(MCPCapability.capability_name).all()
+    out: list[dict[str, Any]] = []
+    for c in caps:
+        if c.result_script or c.schema_overrides:
+            out.append({
+                "capability_name": c.capability_name,
+                "result_script": c.result_script or None,
+                "schema_overrides": c.schema_overrides or None,
+            })
+    return {
+        "kind": "mcp-capability-config",
+        "version": 1,
+        "exported_at": datetime.utcnow().isoformat() + "Z",
+        "server_code": server.code,
+        "capabilities": out,
+    }
+
+
 def export_servers(
     db: Session,
     codes: Optional[list[str]] = None,
     *,
     with_conn_codes: Optional[list[str]] = None,
+    with_cap_codes: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Bundle active servers. Secret values → placeholder.
 
@@ -136,6 +207,7 @@ def export_servers(
     per-server so a batch export can mix "with" and "without".
     """
     with_conn = set(with_conn_codes or ())
+    with_caps = set(with_cap_codes or ())
     q = db.query(MCPServer).filter(MCPServer.deleted_at.is_(None))
     if codes:
         q = q.filter(MCPServer.code.in_(codes))
@@ -167,6 +239,13 @@ def export_servers(
             )
             for k, v in env.items()
         } or None
+        # Per-capability admin config (result_script / schema_overrides). Opt-in
+        # per server (like carrying connections). Applied on the target AFTER a
+        # capability sync, matched by capability_name — see apply_capability_config.
+        if s.code in with_caps:
+            cap_cfgs = _server_capability_configs(db, s.id)
+            if cap_cfgs:
+                item["capabilities"] = cap_cfgs
         items.append(item)
 
     bundle: dict[str, Any] = {
@@ -217,6 +296,7 @@ def export_servers_zip(
     codes: list[str],
     *,
     with_conn_codes: Optional[list[str]] = None,
+    with_cap_codes: Optional[list[str]] = None,
 ) -> bytes:
     """Batch export: ONE self-contained JSON per server, packed into a zip.
 
@@ -230,6 +310,7 @@ def export_servers_zip(
     from io import BytesIO
 
     with_conn = set(with_conn_codes or ())
+    with_caps = set(with_cap_codes or ())
     archive = BytesIO()
     used: set[str] = set()
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
@@ -237,6 +318,7 @@ def export_servers_zip(
             single = export_servers(
                 db, codes=[code],
                 with_conn_codes=[code] if code in with_conn else None,
+                with_cap_codes=[code] if code in with_caps else None,
             )
             name = f"mcp-{code}.json"
             if name in used:  # codes are unique, but be defensive

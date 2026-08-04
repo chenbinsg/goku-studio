@@ -115,6 +115,9 @@ def export_mcp_servers(
     with_conn_codes: Optional[str] = Query(
         None, description="逗号分隔:这些服务器 code 的绑定外部连接一并导出(敏感值仍占位符)",
     ),
+    with_cap_codes: Optional[str] = Query(
+        None, description="逗号分隔:这些服务器 code 的能力配置(result_script/schema_overrides)一并导出",
+    ),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
 ):
@@ -129,20 +132,25 @@ def export_mcp_servers(
     """
     code_list = [c.strip() for c in codes.split(",") if c.strip()] if codes else None
     wc_list = [c.strip() for c in with_conn_codes.split(",") if c.strip()] if with_conn_codes else None
+    cap_list = [c.strip() for c in with_cap_codes.split(",") if c.strip()] if with_cap_codes else None
     stamp = f"{datetime.utcnow():%Y%m%d-%H%M%S}"
     # Resolve the concrete servers this export produces (selection, or ALL when
     # no codes). Format is decided purely by count: 1 → a single JSON;
     # 2+ (incl. "export all") → a zip of one self-contained JSON per server.
     resolved = transfer.resolve_export_server_codes(db, code_list)
     if len(resolved) != 1:
-        data = transfer.export_servers_zip(db, resolved, with_conn_codes=wc_list)
+        data = transfer.export_servers_zip(
+            db, resolved, with_conn_codes=wc_list, with_cap_codes=cap_list,
+        )
         from fastapi.responses import Response
         return Response(
             content=data,
             media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="mcp-servers-{stamp}.zip"'},
         )
-    bundle = transfer.export_servers(db, codes=resolved, with_conn_codes=wc_list)
+    bundle = transfer.export_servers(
+        db, codes=resolved, with_conn_codes=wc_list, with_cap_codes=cap_list,
+    )
     return JSONResponse(
         content=bundle,
         headers={"Content-Disposition": f'attachment; filename="mcp-{resolved[0]}-{stamp}.json"'},
@@ -255,6 +263,27 @@ def delete_mcp_server(
     """
     svc.soft_delete_server(db, server_id, user_id=current_user.id, request=request)
     return None
+
+
+@router.post("/knowledge/reconcile")
+def reconcile_mcp_knowledge(
+    delete: bool = False,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.write")),
+) -> dict:
+    """Reconcile the MCP knowledge catalog against the server source of truth.
+
+    Purges ORPHAN per-server knowledge docs (``source='mcp:<code>'``) whose server
+    is deleted / disabled / gone. The inline purge is best-effort and only fires on
+    the explicit delete/disable calls, so drift accumulates with nothing to correct
+    it — this endpoint is that correction. ONLY touches ``mcp:*`` knowledge; other
+    knowledge (documents / agents / memory) is never read or written.
+
+    ``delete=false`` (default) → **read-only dry run**: returns the orphan list and
+    writes nothing. ``delete=true`` → actually purge the orphans + rebuild the index.
+    """
+    from app.services import mcp_knowledge
+    return mcp_knowledge.reconcile_orphan_knowledge(db, delete=delete)
 
 
 @router.post("/{server_id}/acknowledge-binding-lost", response_model=MCPServerDetail)
@@ -375,6 +404,31 @@ def list_mcp_server_capabilities(
         db, server_id, keyword=keyword, page=page, size=size,
     )
     return MCPCapabilityListResponse(total=total, items=items)
+
+
+@router.get("/{server_id}/capabilities/export")
+def export_mcp_capability_configs(
+    server_id: str,
+    ids: Optional[str] = Query(
+        None, description="逗号分隔的 capability id;省略则导出该服务全部有能力配置的能力",
+    ),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.require_permission("mcp_servers.read")),
+):
+    """Export per-capability admin config (result_script / schema_overrides) as a
+    JSON bundle, keyed by capability_name for name-matched re-import via
+    ``/apply-capability-config``. Read-only, local (like the capabilities list).
+
+    Registered BEFORE ``/{capability_id}`` so the literal ``export`` path wins.
+    """
+    id_list = [c.strip() for c in ids.split(",") if c.strip()] if ids else None
+    bundle = transfer.export_capability_configs(db, server_id, capability_ids=id_list)
+    stamp = f"{datetime.utcnow():%Y%m%d-%H%M%S}"
+    code = bundle.get("server_code") or server_id
+    return JSONResponse(
+        content=bundle,
+        headers={"Content-Disposition": f'attachment; filename="mcp-caps-{code}-{stamp}.json"'},
+    )
 
 
 # NOTE: this static route MUST be declared before "/{capability_id}" below,

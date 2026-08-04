@@ -205,6 +205,67 @@ def purge_server_knowledge(db: Session, server: models.MCPServer) -> int:
         return 0
 
 
+def reconcile_orphan_knowledge(db: Session, *, delete: bool = False) -> dict:
+    """Reconcile the MCP knowledge catalog against the server source of truth.
+
+    Knowledge should exist ONLY for a **usable** server — ``deleted_at IS NULL``
+    AND ``status='enabled'`` (same criterion :func:`refresh_server_index` uses).
+    Any per-server doc (``source='mcp:<code>'``) whose server is gone, soft-deleted
+    or disabled is an ORPHAN. The inline purge is best-effort and only fires on the
+    explicit delete/disable calls, so drift accumulates with nothing to correct it;
+    this is that correction.
+
+    SCOPE — touches ONLY ``mcp:*`` knowledge; document-center / agent / memory
+    knowledge is never read or written. ``mcp:_index`` is excluded (it is rebuilt
+    from the truth set here).
+
+    ``delete=False`` (default) is a READ-ONLY dry run: returns the orphan list and
+    writes nothing. ``delete=True`` purges each orphan (docs + vectors) and rebuilds
+    the index. Returns
+    ``{"orphans": [codes…], "kept": N, "deleted_docs": N, "dry_run": bool}``.
+    """
+    _PREFIX = "mcp:"
+    truth = {
+        code for (code,) in (
+            db.query(models.MCPServer.code)
+            .filter(models.MCPServer.deleted_at.is_(None),
+                    models.MCPServer.status == "enabled")
+            .all()
+        )
+    }
+    existing_sources = {
+        src for (src,) in (
+            db.query(models.KnowledgeDoc.source)
+            .filter(models.KnowledgeDoc.source.like(f"{_PREFIX}%"),
+                    models.KnowledgeDoc.source != _INDEX_SOURCE)
+            .distinct()
+            .all()
+        )
+        if isinstance(src, str)
+    }
+    orphan_codes = sorted(
+        s[len(_PREFIX):] for s in existing_sources if s[len(_PREFIX):] not in truth
+    )
+    kept = len(existing_sources) - len(orphan_codes)
+
+    if not delete:
+        return {"orphans": orphan_codes, "kept": kept, "deleted_docs": 0, "dry_run": True}
+
+    deleted_docs = 0
+    for code in orphan_codes:
+        try:
+            deleted_docs += _delete_existing(db, code)
+        except Exception as e:
+            logger.warning("reconcile_orphan_knowledge: purge failed for %s: %s", code, e)
+    db.commit()
+    refresh_server_index(db)
+    logger.info(
+        "reconcile_orphan_knowledge: purged %d orphan server(s) (%d docs); kept %d",
+        len(orphan_codes), deleted_docs, kept,
+    )
+    return {"orphans": orphan_codes, "kept": kept, "deleted_docs": deleted_docs, "dry_run": False}
+
+
 def refresh_server_knowledge(db: Session, server: models.MCPServer) -> int:
     """Rebuild this server's per-capability catalog AND the global service-overview
     doc (both real-time → any agent can discover available MCP services + their
