@@ -706,17 +706,6 @@ const AgentList: React.FC = () => {
     }
   }
 
-  const handleToggleFavorite = async (agent: AgentDefinition) => {
-    try {
-      const res = await agentApi.toggleFavorite(agent.id)
-      // Optimistic update
-      setAgents(prev => prev.map(a => a.id === agent.id ? { ...a, is_favorite: res.favorited } : a))
-      message.success(res.favorited ? t('agent_pinned_success') : t('agent_unpinned_success'))
-    } catch {
-      message.error(t('agent_list_fetch_failure'))
-    }
-  }
-
   const handleSubmit = async () => {
     if (submitting) return
     setSubmitting(true)
@@ -933,7 +922,6 @@ const AgentList: React.FC = () => {
                               onDelete={handleDelete}
                               onExport={handleExport}
                               onToggleActive={handleToggleActive}
-                              onToggleFavorite={handleToggleFavorite}
                               selected={selectedAgentIds.includes(agent.id)}
                               onSelectChange={toggleAgentSelection}
                               onCapacityClick={setInstancePanelAgent}
@@ -2001,7 +1989,6 @@ function AgentTile({
   onDelete,
   onExport,
   onToggleActive,
-  onToggleFavorite,
   selected,
   onSelectChange,
   onCapacityClick,
@@ -2013,7 +2000,6 @@ function AgentTile({
   onDelete: (id: string) => void
   onExport: (agent: AgentDefinition) => void
   onToggleActive: (agent: AgentDefinition, active: boolean) => void
-  onToggleFavorite: (agent: AgentDefinition) => void
   selected: boolean
   onSelectChange: (agentId: string, checked: boolean) => void
   onCapacityClick?: (agent: AgentDefinition) => void
@@ -2139,16 +2125,6 @@ function AgentTile({
         {agent.visibility === 'role_based' && <Tag color="orange" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px', paddingInline: 4 }}>🔑</Tag>}
         {agent.visibility === 'private'    && <Tag color="default" style={{ marginInlineEnd: 0, fontSize: 10, lineHeight: '16px', paddingInline: 4 }}>🔒</Tag>}
       </Space>
-
-      {/* Favorite star — top-right overlay */}
-      <Tooltip title={agent.is_favorite ? t('agent_unpin_tooltip') : t('agent_pin_tooltip')} placement="top">
-        <span
-          style={{ position: 'absolute', top: 6, right: 6, fontSize: 14, cursor: 'pointer', zIndex: 10, lineHeight: 1 }}
-          onClick={(e) => { e.stopPropagation(); onToggleFavorite(agent) }}
-        >
-          {agent.is_favorite ? '⭐' : '☆'}
-        </span>
-      </Tooltip>
 
       <div style={{ width: '100%', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
         <Tooltip title={agent.is_active ? t('agent_tile_disable_tooltip') : t('agent_tile_enable_tooltip')} placement="bottom">
