@@ -503,26 +503,31 @@ def get_email_pending_counts(
     return {"counts": {slug: count for slug, count in rows if slug}}
 
 
+# Skill files are owned and consumed by the goku-core runtime: the executor
+# loads each SKILL.md from core's own skills root at task time. Studio's local
+# checkout (``_skills_root()``) is a SEPARATE, possibly stale copy — in the
+# split deployment it is the image-baked ``/app/skills`` while core reads a
+# git-synced cache, so a Studio-local read/write shows and edits something the
+# model never sees. These three endpoints therefore proxy to core's identical
+# endpoints, exactly like the MCP live-connection routes, so the UI always views
+# and edits the bytes the model actually loads. ``_skills_root()`` /
+# ``_discover_skills()`` remain only for internal binding-list helpers.
 @router.get("/skills")
-def list_agent_skills(user = Depends(get_current_user)):
-    """Return skills available for Agent binding from the shared skills directory."""
-    return {
-        "root": str(_skills_root()),
-        "skills": _discover_skills(),
-    }
+async def list_agent_skills(request: Request, user = Depends(get_current_user)):
+    """Skills available for Agent binding — proxied to core so the list (and its
+    ``root``) reflect the runtime's own skills directory, not Studio's copy."""
+    from app.services import core_runtime_proxy
+    return await core_runtime_proxy.get_from_core(request, "/api/v1/agents/skills")
 
 
 @router.get("/skills/{skill_id}/content")
-def get_agent_skill_content(skill_id: str, user = Depends(get_current_user)):
-    """Full SKILL.md text for one built-in file skill (the list endpoint only
-    exposes name/description). Restricted to discovered skill ids — never build a
-    path from arbitrary input (path-traversal guard)."""
-    if skill_id not in _valid_skill_ids():
-        raise HTTPException(status_code=404, detail="Skill not found")
-    skill_md = _skills_root() / skill_id / "SKILL.md"
-    if not skill_md.exists():
-        raise HTTPException(status_code=404, detail="Skill content not found")
-    return {"id": skill_id, "content": skill_md.read_text(encoding="utf-8", errors="ignore")}
+async def get_agent_skill_content(skill_id: str, request: Request, user = Depends(get_current_user)):
+    """Full SKILL.md text — proxied to core so the page shows exactly what the
+    executor loads. Core enforces the path-traversal guard and 404s."""
+    from app.services import core_runtime_proxy
+    return await core_runtime_proxy.get_from_core(
+        request, f"/api/v1/agents/skills/{skill_id}/content"
+    )
 
 
 class _SkillContentIn(BaseModel):
@@ -530,25 +535,16 @@ class _SkillContentIn(BaseModel):
 
 
 @router.put("/skills/{skill_id}/content")
-def update_agent_skill_content(skill_id: str, body: _SkillContentIn, user = Depends(get_current_user)):
-    """Overwrite a built-in file skill's SKILL.md. Same path-traversal guard as the
-    GET (restricted to discovered skill ids). Backs up the previous content to
-    SKILL.md.bak first. Takes effect immediately — the executor re-reads the file
-    per task, so no restart is needed."""
-    if skill_id not in _valid_skill_ids():
-        raise HTTPException(status_code=404, detail="Skill not found")
-    skill_dir = _skills_root() / skill_id
-    skill_md = skill_dir / "SKILL.md"
-    if not skill_md.exists():
-        raise HTTPException(status_code=404, detail="Skill content not found")
-    new_content = body.content or ""
-    try:  # best-effort backup so a bad edit is recoverable
-        prev = skill_md.read_text(encoding="utf-8", errors="ignore")
-        (skill_dir / "SKILL.md.bak").write_text(prev, encoding="utf-8")
-    except Exception:
-        pass
-    skill_md.write_text(new_content, encoding="utf-8")
-    return {"id": skill_id, "content": new_content, "bytes": len(new_content.encode("utf-8"))}
+async def update_agent_skill_content(
+    skill_id: str, body: _SkillContentIn, request: Request, user = Depends(get_current_user)
+):
+    """Overwrite a skill's SKILL.md — proxied to core so the edit lands on the
+    file the executor reads and takes effect immediately. Core owns the
+    path-traversal guard, the ``.bak`` backup, and the write."""
+    from app.services import core_runtime_proxy
+    return await core_runtime_proxy.put_to_core(
+        request, f"/api/v1/agents/skills/{skill_id}/content", {"content": body.content}
+    )
 
 
 def _agent_access_filter(query, user, db):
