@@ -243,6 +243,20 @@ const PRESETS: McpPreset[] = [
     service_category: 'data_service', connection_type: 'stdio',
     start_command: 'sh -c \'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$PATH"; export CLICKHOUSE_HOST="$DB_HOST" CLICKHOUSE_PORT="$DB_PORT" CLICKHOUSE_USER="$DB_USERNAME" CLICKHOUSE_DATABASE="$DB_NAME" CLICKHOUSE_SECURE=false; export "CLICKHOUSE_PASS""WORD"="$(printenv "DB_PASS""WORD")"; exec uvx mcp-clickhouse\'',
     needs_connection: true, suggested_type: 'database' },
+  // Same package, pinned for old servers. `list_tables` in every mcp-clickhouse
+  // from 0.1.8 on SELECTs total_bytes_uncompressed / parts / active_parts /
+  // total_marks from system.tables; servers that predate those columns answer
+  // with UNKNOWN_IDENTIFIER (code 47) and the tool is unusable. 0.1.7 is the
+  // last release that doesn't touch them — it walks SHOW TABLES / DESCRIBE /
+  // SHOW CREATE instead. It also predates the `mcp` 2.0 split, so `mcp<2` must
+  // be pinned with it or the import of mcp.server.fastmcp fails at startup.
+  // Trade-off vs the preset above: three tools only (list_databases,
+  // list_tables, run_select_query — note run_query is named run_select_query
+  // here), and list_tables takes `like` rather than page_size/pagination.
+  { key: 'clickhouse-legacy', icon: <DatabaseOutlined style={{ color: '#8c8c8c' }} />,
+    service_category: 'data_service', connection_type: 'stdio',
+    start_command: 'sh -c \'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$PATH"; export CLICKHOUSE_HOST="$DB_HOST" CLICKHOUSE_PORT="$DB_PORT" CLICKHOUSE_USER="$DB_USERNAME" CLICKHOUSE_DATABASE="$DB_NAME" CLICKHOUSE_SECURE=false; export "CLICKHOUSE_PASS""WORD"="$(printenv "DB_PASS""WORD")"; exec uvx --from mcp-clickhouse==0.1.7 --with "mcp<2" mcp-clickhouse\'',
+    needs_connection: true, suggested_type: 'database' },
   { key: 'brave-search', icon: <SearchOutlined style={{ color: '#fb542b' }} />,
     service_category: 'search_service', connection_type: 'stdio',
     start_command: 'npx -y @modelcontextprotocol/server-brave-search',

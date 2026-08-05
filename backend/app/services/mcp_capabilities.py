@@ -401,6 +401,12 @@ _PRESIGNED_FULL_URL_RE = _re.compile(
 _MAX_VAL_LEN = 200
 # Maximum output preview length; the full result body is NEVER logged.
 _MAX_OUTPUT_PREVIEW = 500
+# Maximum output length for the admin test-invoke HTTP response only (see
+# :func:`summarize_test_output`). Deliberately far above _MAX_OUTPUT_PREVIEW:
+# that one bounds a stored DB row, this one bounds a one-shot debugging view
+# whose whole point is seeing what the capability returned. Still finite so a
+# single oversized tool result cannot stall the browser rendering it.
+_MAX_TEST_OUTPUT = 1_000_000
 
 
 def _looks_like_secret_key(name: str) -> bool:
@@ -493,6 +499,73 @@ def _summarize_output(text: str) -> str:
     # ---- 2. 长度截断(对脱敏后的串生效)----------------------------
     if len(sanitized) > _MAX_OUTPUT_PREVIEW:
         return sanitized[:_MAX_OUTPUT_PREVIEW] + f"...(+{len(sanitized) - _MAX_OUTPUT_PREVIEW} chars truncated)"
+    return sanitized
+
+
+def _redact_value(name: str, value: Any) -> Any:
+    """Mask secrets in one value **without** the length trimming that
+    :func:`_sanitize_value` also applies.
+
+    Identical redaction rules — secret-ish key name → ``[REDACTED]``,
+    presigned-URL value → ``[REDACTED]``, recurse into dict / list — but long
+    strings pass through whole. ``_MAX_VAL_LEN`` exists to keep stored
+    ``mcp_call_logs`` rows small; the test-invoke response is neither stored
+    nor replayed, so trimming there only hides the output being inspected.
+    """
+    if _looks_like_secret_key(name):
+        return "[REDACTED]"
+    if isinstance(value, str):
+        if _looks_like_presigned_url(value):
+            return "[REDACTED]"
+        return value
+    if isinstance(value, dict):
+        return {k: _redact_value(k, v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(name, item) for item in value]
+    return value
+
+
+def summarize_test_output(text: str) -> str:
+    """Redacted-but-untrimmed output, for the admin test-invoke response ONLY.
+
+    Kept in sync with core's copy — the live test-invoke route in this service
+    only proxies to core, so nothing here calls it today; it exists so the two
+    copies of this module don't drift.
+
+    Same two stages and same fallbacks as :func:`_summarize_output`, with two
+    deliberate differences:
+
+    1. **脱敏** walks with :func:`_redact_value` instead of
+       :func:`_sanitize_value` — secrets still get masked, but individual
+       values keep their full length (a CREATE TABLE statement or a long text
+       column is exactly what the admin opened the dialog to read).
+    2. **截断** uses :data:`_MAX_TEST_OUTPUT` instead of
+       :data:`_MAX_OUTPUT_PREVIEW`, and keeps the same marker format.
+
+    Nothing that reaches the database calls this — ``output_summary`` on the
+    ``mcp_call_logs`` row still goes through :func:`_summarize_output`, so log
+    volume is unchanged.
+    """
+    if not text:
+        return ""
+    # ---- 1. 脱敏(不做长度裁剪)---------------------------------------
+    sanitized: str
+    try:
+        parsed = json.loads(text)
+    except (TypeError, ValueError):
+        parsed = None
+    if parsed is not None and isinstance(parsed, (dict, list)):
+        cleaned = _redact_value("", parsed)
+        try:
+            sanitized = json.dumps(cleaned, ensure_ascii=False, default=str)
+        except (TypeError, ValueError):
+            sanitized = _redact_presigned_in_text(text)
+    else:
+        sanitized = _redact_presigned_in_text(text)
+
+    # ---- 2. 长度上限(仅防御性,正常返回够不到)------------------------
+    if len(sanitized) > _MAX_TEST_OUTPUT:
+        return sanitized[:_MAX_TEST_OUTPUT] + f"...(+{len(sanitized) - _MAX_TEST_OUTPUT} chars truncated)"
     return sanitized
 
 

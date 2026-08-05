@@ -1374,10 +1374,12 @@ class MCPCapabilityInvokeRequest(BaseModel):
 class MCPCapabilityInvokeResponse(BaseModel):
     """Result returned to the admin after a test-invoke.
 
-    ``output_summary`` is a sanitized + truncated preview suitable for
-    UI display. The full response body is NEVER echoed back here — it
-    can be large or contain sensitive data; the admin should run the
-    capability through normal agent flows for downstream consumption.
+    Relayed verbatim from core (this router only proxies). ``output_summary``
+    carries the capability's own output, redacted (secret-ish keys and
+    presigned URLs → ``[REDACTED]``) but NOT trimmed per value, capped only by
+    a defensive 1M-char ceiling. No length constraint here — whatever core
+    returns passes through. The ``mcp_call_logs`` row keeps its separate
+    500-char preview, so this value is never persisted.
     """
 
     call_log_id: str
