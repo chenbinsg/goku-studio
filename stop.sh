@@ -1,12 +1,8 @@
 #!/bin/bash
+# Thin wrapper — start.sh owns the PID file and the port sweep, so stopping is
+# delegated to it. Keeping a second implementation here is what let this script
+# drift: it looked for $DIR/frontend.pid, a path start.sh never wrote, so it
+# only ever killed whatever happened to hold :5107 and always left the backend
+# on :8107 running.
 DIR="$(cd "$(dirname "$0")" && pwd)"
-
-if [ -f "$DIR/frontend.pid" ]; then
-  PID=$(cat "$DIR/frontend.pid")
-  kill "$PID" 2>/dev/null && echo "Stopped frontend (PID $PID)"
-  rm -f "$DIR/frontend.pid"
-fi
-
-# Also kill anything on 5107
-lsof -ti:5107 | xargs kill -9 2>/dev/null || true
-echo "Studio stopped."
+exec "$DIR/start.sh" stop

@@ -1,10 +1,21 @@
 #!/bin/bash
-# goku-studio startup — launches both the Studio backend (:8107) and frontend (:5107)
-# as background daemons.  Returns immediately; logs go to logs/ in this directory.
+# goku-studio startup — launches the Studio frontend (:5107) as a background
+# daemon.  Returns immediately; logs go to logs/ in this directory.
+#
+# The Studio backend (:8107) is NOT started: since the A1/A2 merge the frontend
+# proxies every /api and /icons request to goku-core on :8106 (see
+# frontend/vite.config.ts), and the Studio backend no longer carries the
+# services those requests need — embedding / vector_store / chunker live only in
+# core. So this script verifies core is up instead, and fails loudly if it is
+# not; a "started" banner with a dead core is exactly the failure mode that let
+# the knowledge-upload 500 go unnoticed.
+#
+# Set STUDIO_WITH_BACKEND=1 to also start :8107 — only useful while the backend
+# is kept around as a rollback path.
 #
 # Usage:
 #   ./start.sh          — start (no-op if already running)
-#   ./start.sh stop     — gracefully stop both processes
+#   ./start.sh stop     — gracefully stop everything this script started
 #   ./start.sh restart  — stop then start
 #   ./start.sh status   — show running PIDs and log paths
 
@@ -18,6 +29,21 @@ FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 mkdir -p "$LOG_DIR"
 
+# ── environment ───────────────────────────────────────────────────────────────
+# Loaded before the command dispatch so that `stop`/`status` resolve the same
+# ports as `start` (a stop that sweeps the wrong port stops nothing).
+
+# Load .env — prefer backend/.env, fall back to root .env
+if [ -f "$DIR/backend/.env" ]; then
+  set -a; . "$DIR/backend/.env"; set +a
+elif [ -f "$DIR/.env" ]; then
+  set -a; . "$DIR/.env"; set +a
+fi
+
+BACKEND_PORT="${VITE_STUDIO_BACKEND_PORT:-8107}"
+FRONTEND_PORT="${VITE_STUDIO_PORT:-5107}"
+CORE_URL="${VITE_CORE_BACKEND_URL:-http://localhost:8106}"
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 pid_running() {
@@ -25,35 +51,58 @@ pid_running() {
 }
 
 stop_studio() {
-  if [ ! -f "$PID_FILE" ]; then
-    echo "No PID file found — studio may not be running."
-    return 0
-  fi
-  # shellcheck disable=SC1090
-  source "$PID_FILE"
   local stopped=0
-  if pid_running "$BACKEND_PID"; then
-    echo "Stopping backend (PID $BACKEND_PID)…"
-    kill "$BACKEND_PID" 2>/dev/null && stopped=$((stopped+1))
+  if [ -f "$PID_FILE" ]; then
+    # shellcheck disable=SC1090
+    source "$PID_FILE"
+    if pid_running "$BACKEND_PID"; then
+      echo "Stopping backend (PID $BACKEND_PID)…"
+      kill "$BACKEND_PID" 2>/dev/null && stopped=$((stopped+1))
+    fi
+    if pid_running "$FRONTEND_PID"; then
+      echo "Stopping frontend (PID $FRONTEND_PID)…"
+      kill "$FRONTEND_PID" 2>/dev/null && stopped=$((stopped+1))
+    fi
+    rm -f "$PID_FILE"
+  else
+    echo "No PID file found — falling back to a port sweep."
   fi
-  if pid_running "$FRONTEND_PID"; then
-    echo "Stopping frontend (PID $FRONTEND_PID)…"
-    kill "$FRONTEND_PID" 2>/dev/null && stopped=$((stopped+1))
-  fi
-  rm -f "$PID_FILE"
-  echo "Stopped $stopped process(es)."
+
+  # Port sweep: uvicorn --reload spawns a child the PID file does not track, and
+  # older runs of this script used a different PID-file layout, so a PID-only
+  # stop reliably leaves processes behind on :8107.
+  for port in "${FRONTEND_PORT:-5107}" "${BACKEND_PORT:-8107}"; do
+    local pids
+    pids=$(lsof -ti:"$port" 2>/dev/null)
+    if [ -n "$pids" ]; then
+      echo "Reclaiming port $port (PIDs: $(echo "$pids" | tr '\n' ' '))…"
+      echo "$pids" | xargs kill 2>/dev/null
+      sleep 1
+      pids=$(lsof -ti:"$port" 2>/dev/null)
+      [ -n "$pids" ] && echo "$pids" | xargs kill -9 2>/dev/null
+      stopped=$((stopped+1))
+    fi
+  done
+
+  echo "Stopped $stopped process(es)/port(s)."
+}
+
+core_up() {
+  curl -sf --max-time 3 "$CORE_URL/health" -o /dev/null 2>/dev/null
 }
 
 status_studio() {
+  echo "Core (:${CORE_URL##*:})  $(core_up && echo '✅ reachable' || echo "❌ unreachable at $CORE_URL")"
   if [ ! -f "$PID_FILE" ]; then
     echo "studio is NOT running (no PID file)."
     return 1
   fi
   # shellcheck disable=SC1090
   source "$PID_FILE"
-  echo "Backend  PID: ${BACKEND_PID:-—}  $(pid_running "$BACKEND_PID" && echo '✅ running' || echo '❌ dead')"
   echo "Frontend PID: ${FRONTEND_PID:-—}  $(pid_running "$FRONTEND_PID" && echo '✅ running' || echo '❌ dead')"
-  echo "Backend  log: $BACKEND_LOG"
+  if [ -n "$BACKEND_PID" ]; then
+    echo "Backend  PID: $BACKEND_PID  $(pid_running "$BACKEND_PID" && echo '✅ running (rollback mode)' || echo '❌ dead')"
+  fi
   echo "Frontend log: $FRONTEND_LOG"
 }
 
@@ -72,83 +121,59 @@ esac
 if [ -f "$PID_FILE" ]; then
   # shellcheck disable=SC1090
   source "$PID_FILE"
-  if pid_running "$BACKEND_PID" && pid_running "$FRONTEND_PID"; then
-    echo "goku-studio is already running (backend=$BACKEND_PID, frontend=$FRONTEND_PID)."
+  if pid_running "$FRONTEND_PID"; then
+    echo "goku-studio is already running (frontend=$FRONTEND_PID)."
     echo "Use '$0 restart' to restart or '$0 stop' to stop."
     exit 0
   fi
   rm -f "$PID_FILE"  # stale pids — clean up and proceed
 fi
 
-# ── load environment ──────────────────────────────────────────────────────────
+# ── require goku-core ─────────────────────────────────────────────────────────
+# The frontend proxies /api and /icons to core, so a Studio that starts without
+# core is a Studio where every page is broken. Fail here rather than print a
+# green banner and let the user discover it click by click.
 
-# Load .env — prefer backend/.env, fall back to root .env
-if [ -f "$DIR/backend/.env" ]; then
-  set -a; . "$DIR/backend/.env"; set +a
-elif [ -f "$DIR/.env" ]; then
-  set -a; . "$DIR/.env"; set +a
-fi
-
-# Resolve venv — prefer backend/.venv, fall back to root .venv
-if [ -d "$DIR/backend/.venv" ]; then
-  VENV="$DIR/backend/.venv"
-elif [ -d "$DIR/.venv" ]; then
-  VENV="$DIR/.venv"
-else
-  echo "❌ No .venv found — run: python3 -m venv backend/.venv && backend/.venv/bin/pip install -r backend/requirements.txt" >&2
+if ! core_up; then
+  echo "❌ goku-core is not reachable at $CORE_URL" >&2
+  echo "   Studio's frontend proxies every /api request there (frontend/vite.config.ts)," >&2
+  echo "   so nothing will work until it is up. Start it with:  ../core/start.sh" >&2
+  echo "   (different host/port? set VITE_CORE_BACKEND_URL)" >&2
   exit 1
 fi
-# shellcheck disable=SC1091
-source "$VENV/bin/activate"
 
-BACKEND_PORT="${VITE_STUDIO_BACKEND_PORT:-8107}"
-FRONTEND_PORT="${VITE_STUDIO_PORT:-5107}"
+# uv/uvx and node/npx are deliberately NOT installed here any more: Studio's MCP
+# test/sync no longer spawns stdio subprocesses, it forwards to core
+# (services/core_runtime_proxy.py), so those runtimes are core's dependency.
+#
+# Alembic is likewise not run here: alembic/studio/versions/ holds zero
+# revisions and core owns the `aios` schema (core/docs/A1-merge-plan.md). The
+# upgrade only ever created an empty studio_alembic_version table.
 
-# ── Ensure MCP runtimes: uv/uvx + node/npx ─────────────────────────────────────
-# Studio's MCP server test/sync spawns the same stdio subprocesses as core:
-# `npx -y <pkg>` presets (mysql, github, …) need node; `uvx <pkg>` presets
-# (official ClickHouse: `uvx mcp-clickhouse`) need uv. Docker deploys bake both
-# into the image (see backend/Dockerfile); this covers bare-metal/script deploys.
-# Idempotent: skips instantly when already installed.
-if ! command -v uvx >/dev/null 2>&1 && [ ! -x /usr/local/bin/uvx ] && [ ! -x /opt/homebrew/bin/uvx ]; then
-  echo "uvx not found — installing uv (runtime for uvx-based MCP servers)..."
-  if command -v brew >/dev/null 2>&1; then
-    brew install uv || echo "WARN: brew install uv failed — install uv manually"
+# ── optional: Studio backend (rollback path only) ─────────────────────────────
+
+BACKEND_PID=""
+if [ "${STUDIO_WITH_BACKEND:-0}" = "1" ]; then
+  if [ -d "$DIR/backend/.venv" ]; then
+    VENV="$DIR/backend/.venv"
+  elif [ -d "$DIR/.venv" ]; then
+    VENV="$DIR/.venv"
   else
-    curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh \
-      || curl -LsSf https://astral.sh/uv/install.sh | sh \
-      || echo "WARN: uv install failed — uvx-based MCP servers (clickhouse) will not start"
-    if [ -x "$HOME/.local/bin/uvx" ] && [ ! -x /usr/local/bin/uvx ]; then
-      ln -sf "$HOME/.local/bin/uv" "$HOME/.local/bin/uvx" /usr/local/bin/ 2>/dev/null \
-        || echo "WARN: could not link uvx into /usr/local/bin — do it manually: sudo ln -s $HOME/.local/bin/uv{,x} /usr/local/bin/"
-    fi
+    echo "❌ STUDIO_WITH_BACKEND=1 but no .venv found — run: python3 -m venv backend/.venv && backend/.venv/bin/pip install -r backend/requirements.txt" >&2
+    exit 1
   fi
-  # Final verification — `curl | sh` can "succeed" silently on network failure,
-  # so re-check and warn loudly if uvx is still absent.
-  command -v uvx >/dev/null 2>&1 || [ -x /usr/local/bin/uvx ] || [ -x /opt/homebrew/bin/uvx ] || \
-    echo "WARN: uv is still not installed — uvx-based MCP servers (clickhouse) will fail to start. Install manually: https://docs.astral.sh/uv/"
+  # shellcheck disable=SC1091
+  source "$VENV/bin/activate"
+
+  echo "=== goku-studio: starting backend on :${BACKEND_PORT} (rollback mode) ==="
+  cd "$DIR/backend"
+  nohup uvicorn app.main:app \
+    --host 0.0.0.0 \
+    --port "$BACKEND_PORT" \
+    --reload \
+    >> "$BACKEND_LOG" 2>&1 &
+  BACKEND_PID=$!
 fi
-command -v npx >/dev/null 2>&1 || [ -x /opt/homebrew/bin/npx ] || \
-  echo "WARN: npx (node) not found — npx-based MCP servers (mysql, github, …) will fail to start. Install Node.js 20+."
-
-# ── migrations ────────────────────────────────────────────────────────────────
-
-echo "=== goku-studio: applying migrations ==="
-cd "$DIR/backend"
-if ! alembic -c alembic/studio/alembic.ini upgrade head; then
-  echo "ERROR: migrations failed — aborting." >&2
-  exit 1
-fi
-
-# ── start backend (daemon) ────────────────────────────────────────────────────
-
-echo "=== goku-studio: starting backend on :${BACKEND_PORT} ==="
-nohup uvicorn app.main:app \
-  --host 0.0.0.0 \
-  --port "$BACKEND_PORT" \
-  --reload \
-  >> "$BACKEND_LOG" 2>&1 &
-BACKEND_PID=$!
 
 # ── frontend dependencies ─────────────────────────────────────────────────────
 
@@ -172,16 +197,14 @@ BACKEND_PID=$BACKEND_PID
 FRONTEND_PID=$FRONTEND_PID
 EOF
 
-# Give uvicorn a moment to bind the port, then verify via HTTP
-# (PID-based check is unreliable because uvicorn --reload spawns a reloader
-#  parent that exits quickly, leaving a child process we don't track.)
-sleep 2
-if ! curl -s --max-time 3 "http://localhost:${BACKEND_PORT}/api/v1/agents" \
-     -o /dev/null 2>/dev/null; then
-  echo "⚠️  Backend may not be ready yet — check $BACKEND_LOG" >&2
+# Verify the frontend actually serves — a dead vite exits within a second or two
+# (port already in use, bad config), and the PID check alone would miss it.
+sleep 3
+if ! curl -sf --max-time 3 "http://localhost:${FRONTEND_PORT}/" -o /dev/null 2>/dev/null; then
+  echo "⚠️  Frontend not answering on :${FRONTEND_PORT} yet — check $FRONTEND_LOG" >&2
 fi
-if ! pid_running "$FRONTEND_PID"; then
-  echo "⚠️  Frontend failed to start — check $FRONTEND_LOG" >&2
+if [ -n "$BACKEND_PID" ] && ! pid_running "$BACKEND_PID"; then
+  echo "⚠️  Backend failed to start — check $BACKEND_LOG" >&2
 fi
 
 # ── done ──────────────────────────────────────────────────────────────────────
@@ -190,12 +213,14 @@ echo ""
 echo "╔══════════════════════════════════════════════════════╗"
 echo "║  Goku Studio started (daemon mode)                   ║"
 echo "║                                                      ║"
-printf "║  Backend  → http://localhost:%-5s  PID %-8s     ║\n" "$BACKEND_PORT"  "$BACKEND_PID"
 printf "║  Frontend → http://localhost:%-5s  PID %-8s     ║\n" "$FRONTEND_PORT" "$FRONTEND_PID"
+printf "║  API      → %-40s ║\n" "$CORE_URL (goku-core)"
+if [ -n "$BACKEND_PID" ]; then
+  printf "║  Backend  → http://localhost:%-5s  PID %-8s     ║\n" "$BACKEND_PORT" "$BACKEND_PID"
+  echo "║             (rollback mode — nothing routes here)    ║"
+fi
 echo "║                                                      ║"
-echo "║  Logs:                                               ║"
-printf "║    backend:  %-38s  ║\n" "logs/backend.log"
-printf "║    frontend: %-38s  ║\n" "logs/frontend.log"
+printf "║  Log: %-45s ║\n" "logs/frontend.log"
 echo "║                                                      ║"
 echo "║  To stop:  ./start.sh stop                          ║"
 echo "║  Status:   ./start.sh status                        ║"
