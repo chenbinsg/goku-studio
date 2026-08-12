@@ -603,6 +603,8 @@ export const agentApi = {
   get: (id: string) => api.get<any>(`/agents/${id}`),
   exportBatch: (agentIds: string[]) =>
     api.post<{ download_url?: string }>('/agents/export', { agent_ids: agentIds }),
+  generateDescription: (data: { name?: string; agent_type?: string; system_prompt_override?: string; skills?: string[] }) =>
+    api.post<{ description: string }>('/agents/generate-description', data),
   create: (data: {
     name: string
     agent_type: string

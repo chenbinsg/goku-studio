@@ -88,6 +88,11 @@ interface AgentDefinition {
   dlp_bypass: boolean
   memory_enabled?: boolean
   auto_skill_enabled?: boolean
+  can_delegate?: boolean
+  can_be_delegated?: boolean
+  can_host_meeting?: boolean
+  can_join_meeting?: boolean
+  collaboration_description?: string | null
 }
 
 interface BaseType {
@@ -191,6 +196,7 @@ const AgentList: React.FC = () => {
   const [canonicalDepts, setCanonicalDepts] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [submitting, setSubmitting] = useState(false)
+  const [generatingDesc, setGeneratingDesc] = useState(false)
   const [uploadingFigure, setUploadingFigure] = useState(false)
   // 查看内置文件 skill 的 SKILL.md 全文
   const [skillView, setSkillView] = useState<{ id: string; name: string; content: string } | null>(null)
@@ -495,6 +501,11 @@ const AgentList: React.FC = () => {
       dlp_bypass: agent.dlp_bypass || false,
       memory_enabled: agent.memory_enabled !== false,
       auto_skill_enabled: agent.auto_skill_enabled !== false,
+      can_delegate: agent.can_delegate || false,
+      can_be_delegated: agent.can_be_delegated || false,
+      can_host_meeting: agent.can_host_meeting || false,
+      can_join_meeting: agent.can_join_meeting || false,
+      collaboration_description: agent.collaboration_description || '',
     })
     // Reset email config to defaults immediately so the tab never shows stale data
     // from a previously edited agent while the async fetch is in-flight (or if it fails).
@@ -751,6 +762,26 @@ const AgentList: React.FC = () => {
       }
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  const handleGenerateDescription = async () => {
+    const { name, agent_type, system_prompt_override, skills } = form.getFieldsValue([
+      'name', 'agent_type', 'system_prompt_override', 'skills',
+    ])
+    if (!name && !agent_type && !system_prompt_override && !(skills || []).length) {
+      message.warning(t('agent_edit_generate_description_empty_warning'))
+      return
+    }
+    setGeneratingDesc(true)
+    try {
+      const res = await agentApi.generateDescription({ name, agent_type, system_prompt_override, skills })
+      form.setFieldsValue({ collaboration_description: res.description })
+      form.validateFields(['collaboration_description']).catch(() => {})
+    } catch (err: any) {
+      message.error(err?.response?.data?.detail || t('agent_edit_generate_description_failure'))
+    } finally {
+      setGeneratingDesc(false)
     }
   }
 
@@ -1066,59 +1097,164 @@ const AgentList: React.FC = () => {
                       <Input />
                     </Form.Item>
 
-                    <Form.Item
-                      label={t('agent_edit_form_status')}
-                      name="is_active"
-                      valuePropName="checked"
-                      initialValue={true}
-                    >
-                      <Switch
-                        checkedChildren={t('agent_edit_switch_enabled')}
-                        unCheckedChildren={t('agent_edit_switch_disabled')}
-                        style={{ minWidth: 140 }}
-                      />
-                    </Form.Item>
+                    {/* Uniform grid so every switch lines up in neat columns regardless of
+                        how many wrap to the next row — the old ad-hoc flex-basis values
+                        (160/150/120px mixed) made rows drift out of alignment as soon as
+                        this grew past 4 items. */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px 16px' }}>
+                      <Form.Item
+                        label={t('agent_edit_form_status')}
+                        name="is_active"
+                        valuePropName="checked"
+                        initialValue={true}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Switch
+                          checkedChildren={t('agent_edit_switch_enabled')}
+                          unCheckedChildren={t('agent_edit_switch_disabled')}
+                          style={{ minWidth: 140 }}
+                        />
+                      </Form.Item>
 
-                    <Form.Item
-                      label={t('agent_edit_form_dlp_bypass')}
-                      name="dlp_bypass"
-                      valuePropName="checked"
-                      initialValue={false}
-                      tooltip={t('agent_edit_dlp_bypass_tooltip')}
-                    >
-                      <Switch
-                        checkedChildren={t('agent_edit_dlp_switch_bypass')}
-                        unCheckedChildren={t('agent_edit_dlp_switch_on')}
-                        style={{ minWidth: 130 }}
-                      />
-                    </Form.Item>
+                      <Form.Item
+                        label={t('agent_edit_form_dlp_bypass')}
+                        name="dlp_bypass"
+                        valuePropName="checked"
+                        initialValue={false}
+                        tooltip={t('agent_edit_dlp_bypass_tooltip')}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Switch
+                          checkedChildren={t('agent_edit_dlp_switch_bypass')}
+                          unCheckedChildren={t('agent_edit_dlp_switch_on')}
+                          style={{ minWidth: 130 }}
+                        />
+                      </Form.Item>
 
-                    <Form.Item
-                      label={t('agent_edit_form_memory')}
-                      name="memory_enabled"
-                      valuePropName="checked"
-                      initialValue={true}
-                      tooltip={t('agent_edit_memory_tooltip')}
-                    >
-                      <Switch
-                        checkedChildren={t('agent_edit_switch_on')}
-                        unCheckedChildren={t('agent_edit_switch_off')}
-                        style={{ minWidth: 100 }}
-                      />
-                    </Form.Item>
+                      <Form.Item
+                        label={t('agent_edit_form_memory')}
+                        name="memory_enabled"
+                        valuePropName="checked"
+                        initialValue={true}
+                        tooltip={t('agent_edit_memory_tooltip')}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Switch
+                          checkedChildren={t('agent_edit_switch_on')}
+                          unCheckedChildren={t('agent_edit_switch_off')}
+                          style={{ minWidth: 100 }}
+                        />
+                      </Form.Item>
 
-                    <Form.Item
-                      label={t('agent_edit_form_auto_skill')}
-                      name="auto_skill_enabled"
-                      valuePropName="checked"
-                      initialValue={true}
-                      tooltip={t('agent_edit_auto_skill_tooltip')}
-                    >
-                      <Switch
-                        checkedChildren={t('agent_edit_switch_on')}
-                        unCheckedChildren={t('agent_edit_switch_off')}
-                        style={{ minWidth: 100 }}
-                      />
+                      <Form.Item
+                        label={t('agent_edit_form_auto_skill')}
+                        name="auto_skill_enabled"
+                        valuePropName="checked"
+                        initialValue={true}
+                        tooltip={t('agent_edit_auto_skill_tooltip')}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Switch
+                          checkedChildren={t('agent_edit_switch_on')}
+                          unCheckedChildren={t('agent_edit_switch_off')}
+                          style={{ minWidth: 100 }}
+                        />
+                      </Form.Item>
+
+                      <Form.Item
+                        label={t('agent_edit_form_can_delegate')}
+                        name="can_delegate"
+                        valuePropName="checked"
+                        initialValue={false}
+                        tooltip={t('agent_edit_can_delegate_tooltip')}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Switch
+                          checkedChildren={t('agent_edit_switch_on')}
+                          unCheckedChildren={t('agent_edit_switch_off')}
+                          style={{ minWidth: 100 }}
+                        />
+                      </Form.Item>
+
+                      <Form.Item
+                        label={t('agent_edit_form_can_be_delegated')}
+                        name="can_be_delegated"
+                        valuePropName="checked"
+                        initialValue={false}
+                        tooltip={t('agent_edit_can_be_delegated_tooltip')}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Switch
+                          checkedChildren={t('agent_edit_switch_on')}
+                          unCheckedChildren={t('agent_edit_switch_off')}
+                          style={{ minWidth: 100 }}
+                        />
+                      </Form.Item>
+
+                      <Form.Item
+                        label={t('agent_edit_form_can_host_meeting')}
+                        name="can_host_meeting"
+                        valuePropName="checked"
+                        initialValue={false}
+                        tooltip={t('agent_edit_can_host_meeting_tooltip')}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Switch
+                          checkedChildren={t('agent_edit_switch_on')}
+                          unCheckedChildren={t('agent_edit_switch_off')}
+                          style={{ minWidth: 100 }}
+                        />
+                      </Form.Item>
+
+                      <Form.Item
+                        label={t('agent_edit_form_can_join_meeting')}
+                        name="can_join_meeting"
+                        valuePropName="checked"
+                        initialValue={false}
+                        tooltip={t('agent_edit_can_join_meeting_tooltip')}
+                        style={{ marginBottom: 8 }}
+                      >
+                        <Switch
+                          checkedChildren={t('agent_edit_switch_on')}
+                          unCheckedChildren={t('agent_edit_switch_off')}
+                          style={{ minWidth: 100 }}
+                        />
+                      </Form.Item>
+                    </div>
+
+                    {/* Only appears once a collaboration switch is on — and only then is it
+                        required. Deliberately separate from the general `description` field
+                        above (that one is for the human-facing gallery); this is what other
+                        agents read via list_delegatable_agents. */}
+                    <Form.Item shouldUpdate noStyle>
+                      {({ getFieldValue }) => {
+                        const collabOn = ['can_delegate', 'can_be_delegated', 'can_host_meeting', 'can_join_meeting']
+                          .some((f) => getFieldValue(f))
+                        if (!collabOn) return null
+                        return (
+                          <Form.Item
+                            label={
+                              <Space>
+                                <span>{t('agent_edit_form_collaboration_description')}</span>
+                                <Button
+                                  type="link"
+                                  size="small"
+                                  loading={generatingDesc}
+                                  onClick={handleGenerateDescription}
+                                  style={{ padding: 0, height: 'auto', fontSize: 12 }}
+                                >
+                                  {t('agent_edit_generate_description_button')}
+                                </Button>
+                              </Space>
+                            }
+                            name="collaboration_description"
+                            tooltip={t('agent_edit_description_collab_tooltip')}
+                            rules={[{ required: true, message: t('agent_edit_description_required_for_collab') }]}
+                          >
+                            <Input placeholder={t('agent_edit_collaboration_description_placeholder')} />
+                          </Form.Item>
+                        )
+                      }}
                     </Form.Item>
 
                     <Form.Item label={t('agent_edit_form_figure')}>

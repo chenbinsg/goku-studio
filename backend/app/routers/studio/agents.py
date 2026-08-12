@@ -54,6 +54,11 @@ class AgentDefinitionCreate(BaseModel):
     dlp_bypass: bool | None = None
     memory_enabled: bool | None = None
     auto_skill_enabled: bool | None = None
+    can_delegate: bool | None = None
+    can_be_delegated: bool | None = None
+    can_host_meeting: bool | None = None
+    can_join_meeting: bool | None = None
+    collaboration_description: str | None = None
 
 
 class AgentDefinitionUpdate(BaseModel):
@@ -84,6 +89,11 @@ class AgentDefinitionUpdate(BaseModel):
     dlp_bypass: bool | None = None
     memory_enabled: bool | None = None
     auto_skill_enabled: bool | None = None
+    can_delegate: bool | None = None
+    can_be_delegated: bool | None = None
+    can_host_meeting: bool | None = None
+    can_join_meeting: bool | None = None
+    collaboration_description: str | None = None
 
 
 class AgentImportResult(BaseModel):
@@ -920,6 +930,11 @@ def create_agent(
         dlp_bypass=bool(data.dlp_bypass),
         memory_enabled=True if data.memory_enabled is None else bool(data.memory_enabled),
         auto_skill_enabled=True if data.auto_skill_enabled is None else bool(data.auto_skill_enabled),
+        can_delegate=bool(data.can_delegate),
+        can_be_delegated=bool(data.can_be_delegated),
+        can_host_meeting=bool(data.can_host_meeting),
+        can_join_meeting=bool(data.can_join_meeting),
+        collaboration_description=data.collaboration_description,
         created_at=now,
         updated_at=now,
     )
@@ -1363,6 +1378,16 @@ def update_agent(
         agent.memory_enabled = data.memory_enabled
     if data.auto_skill_enabled is not None:
         agent.auto_skill_enabled = data.auto_skill_enabled
+    if data.can_delegate is not None:
+        agent.can_delegate = data.can_delegate
+    if data.can_be_delegated is not None:
+        agent.can_be_delegated = data.can_be_delegated
+    if data.can_host_meeting is not None:
+        agent.can_host_meeting = data.can_host_meeting
+    if data.can_join_meeting is not None:
+        agent.can_join_meeting = data.can_join_meeting
+    if data.collaboration_description is not None:
+        agent.collaboration_description = data.collaboration_description
     agent.updated_at = datetime.utcnow()
 
     db.commit()
@@ -1600,6 +1625,11 @@ def _serialize(agent) -> dict:
         "dlp_bypass": bool(getattr(agent, "dlp_bypass", False)),
         "memory_enabled": bool(getattr(agent, "memory_enabled", True)),
         "auto_skill_enabled": bool(getattr(agent, "auto_skill_enabled", True)),
+        "can_delegate": bool(getattr(agent, "can_delegate", False)),
+        "can_be_delegated": bool(getattr(agent, "can_be_delegated", False)),
+        "can_host_meeting": bool(getattr(agent, "can_host_meeting", False)),
+        "can_join_meeting": bool(getattr(agent, "can_join_meeting", False)),
+        "collaboration_description": getattr(agent, "collaboration_description", None),
         "created_at": agent.created_at.isoformat() if agent.created_at else None,
         "updated_at": agent.updated_at.isoformat() if agent.updated_at else None,
     }
