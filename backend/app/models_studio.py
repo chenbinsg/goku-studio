@@ -58,6 +58,17 @@ class AgentDefinition(Base):
     auto_send_drafts       = Column(Boolean,     default=False, nullable=False)
     memory_enabled         = Column(Boolean,     default=True,  nullable=False)
     auto_skill_enabled     = Column(Boolean,     default=True,  nullable=False)
+    # Agent-to-agent collaboration (default OFF). The columns are created by
+    # Core's migrations 0098/0099/0100 — this side owns no migrations, it only
+    # maps what already exists. Missing here until now, while this repo's
+    # routers/studio/agents.py already read/wrote them: creating an agent
+    # through THIS backend raised TypeError on the unmapped kwarg, and updates
+    # silently set a stray Python attribute that never reached the DB.
+    can_delegate           = Column(Boolean,     default=False, nullable=False)
+    can_be_delegated       = Column(Boolean,     default=False, nullable=False)
+    can_host_meeting       = Column(Boolean,     default=False, nullable=False)
+    can_join_meeting       = Column(Boolean,     default=False, nullable=False)
+    collaboration_description = Column(Text,     nullable=True)
     created_at             = Column(DateTime,    default=datetime.utcnow)
     updated_at             = Column(DateTime,    default=datetime.utcnow, onupdate=datetime.utcnow)
 

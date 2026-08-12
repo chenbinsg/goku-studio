@@ -386,6 +386,15 @@ def _build_export_payload(agent) -> dict:
             "is_active": agent.is_active,
             "visibility": getattr(agent, "visibility", None) or "department",
             "allowed_roles": getattr(agent, "allowed_roles", None) or [],
+            # Agent-to-agent collaboration config travels with the agent: without
+            # it an imported agent silently lands with every switch off and no
+            # collaboration_description, so it can neither delegate nor be picked
+            # as a meeting invitee until someone re-configures it by hand.
+            "can_delegate": bool(getattr(agent, "can_delegate", False)),
+            "can_be_delegated": bool(getattr(agent, "can_be_delegated", False)),
+            "can_host_meeting": bool(getattr(agent, "can_host_meeting", False)),
+            "can_join_meeting": bool(getattr(agent, "can_join_meeting", False)),
+            "collaboration_description": getattr(agent, "collaboration_description", None),
         },
         "figure_asset": figure_asset,
     }
@@ -1242,6 +1251,14 @@ def import_agent(
         existing.is_active = bool(agent_data.get("is_active", True))
         existing.visibility = agent_data.get("visibility") or ("public" if not agent_data.get("department") else "department")
         existing.allowed_roles = agent_data.get("allowed_roles") or []
+        # Files exported before these fields existed have no such keys, so
+        # bool(None) → False keeps the "default OFF" rule for old files rather
+        # than silently enabling anything.
+        existing.can_delegate = bool(agent_data.get("can_delegate", False))
+        existing.can_be_delegated = bool(agent_data.get("can_be_delegated", False))
+        existing.can_host_meeting = bool(agent_data.get("can_host_meeting", False))
+        existing.can_join_meeting = bool(agent_data.get("can_join_meeting", False))
+        existing.collaboration_description = agent_data.get("collaboration_description")
         existing.updated_at = now
         db.commit()
         db.refresh(existing)
@@ -1286,6 +1303,11 @@ def import_agent(
         is_active=bool(agent_data.get("is_active", True)),
         visibility=agent_data.get("visibility") or ("public" if not agent_data.get("department") else "department"),
         allowed_roles=agent_data.get("allowed_roles") or [],
+        can_delegate=bool(agent_data.get("can_delegate", False)),
+        can_be_delegated=bool(agent_data.get("can_be_delegated", False)),
+        can_host_meeting=bool(agent_data.get("can_host_meeting", False)),
+        can_join_meeting=bool(agent_data.get("can_join_meeting", False)),
+        collaboration_description=agent_data.get("collaboration_description"),
         user_id=user.id,
         tenant_id=getattr(user, "tenant_id", None),
         created_at=now,

@@ -465,7 +465,7 @@
   "agent_edit_form_collaboration_description": "Collaboration Description",
   "agent_edit_collaboration_description_placeholder": "What is this agent good for? Other agents will read this to decide whether to delegate to it.",
   "agent_edit_description_collab_tooltip": "Also shown to other agents (via list_delegatable_agents) when they're deciding who to delegate to or invite into a session — write a short, concrete summary of what this agent is good for.",
-  "agent_edit_description_required_for_collab": "Required when any collaboration switch is on — a host can't decide who to invite without knowing what this agent does.",
+  "agent_edit_description_required_for_collab": "Required when \"can be delegated to\" or \"can join meeting\" is on — this is what another agent reads when picking who to use. Optional if only the initiate-side switches are on.",
   "agent_edit_generate_description_button": "✨ Generate",
   "agent_edit_generate_description_empty_warning": "Fill in a name, base type, skills, or system prompt first — there's nothing to summarize yet.",
   "agent_edit_generate_description_failure": "Description generation failed",

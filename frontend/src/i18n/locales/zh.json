@@ -465,7 +465,7 @@
   "agent_edit_form_collaboration_description": "协作简介",
   "agent_edit_collaboration_description_placeholder": "这个 agent 擅长做什么？其他 agent 会读这段来判断要不要委派给它。",
   "agent_edit_description_collab_tooltip": "其他 agent 决定要委派/邀请谁的时候(通过 list_delegatable_agents)也会看到这段简介——写清楚这个 agent 擅长做什么。",
-  "agent_edit_description_required_for_collab": "开启了协作开关就必须填——主持人不知道这个 agent 是干什么的，没法决定该拉谁进会。",
+  "agent_edit_description_required_for_collab": "开启「允许被委派」或「允许参与会议」时必填——别的 agent 就是靠这段判断该不该选它；只开发起方向的开关时可以不填。",
   "agent_edit_generate_description_button": "✨ AI 生成",
   "agent_edit_generate_description_empty_warning": "先填一下名字、基础类型、技能或系统提示词——现在还没东西可以总结。",
   "agent_edit_generate_description_failure": "简介生成失败",

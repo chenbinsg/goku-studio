@@ -1222,15 +1222,23 @@ const AgentList: React.FC = () => {
                       </Form.Item>
                     </div>
 
-                    {/* Only appears once a collaboration switch is on — and only then is it
-                        required. Deliberately separate from the general `description` field
-                        above (that one is for the human-facing gallery); this is what other
-                        agents read via list_delegatable_agents. */}
+                    {/* Only appears once a collaboration switch is on. Deliberately separate
+                        from the general `description` field above (that one is for the
+                        human-facing gallery); this is what other agents read via
+                        list_delegatable_agents.
+
+                        Required ONLY for the receive-direction switches: that listing is
+                        filtered by can_be_delegated / can_join_meeting, so the text is what
+                        another agent reads when picking someone. An agent that only
+                        initiates (can_delegate / can_host_meeting) is never in anyone's
+                        candidate list, so nothing would ever read it — optional there. */}
                     <Form.Item shouldUpdate noStyle>
                       {({ getFieldValue }) => {
                         const collabOn = ['can_delegate', 'can_be_delegated', 'can_host_meeting', 'can_join_meeting']
                           .some((f) => getFieldValue(f))
                         if (!collabOn) return null
+                        const requiredForCollab = ['can_be_delegated', 'can_join_meeting']
+                          .some((f) => getFieldValue(f))
                         return (
                           <Form.Item
                             label={
@@ -1249,7 +1257,7 @@ const AgentList: React.FC = () => {
                             }
                             name="collaboration_description"
                             tooltip={t('agent_edit_description_collab_tooltip')}
-                            rules={[{ required: true, message: t('agent_edit_description_required_for_collab') }]}
+                            rules={[{ required: requiredForCollab, message: t('agent_edit_description_required_for_collab') }]}
                           >
                             <Input placeholder={t('agent_edit_collaboration_description_placeholder')} />
                           </Form.Item>

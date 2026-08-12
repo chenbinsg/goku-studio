@@ -465,7 +465,7 @@
   "agent_edit_form_collaboration_description": "協働用の説明",
   "agent_edit_collaboration_description_placeholder": "このエージェントは何が得意ですか？他のエージェントがこれを読んで委任するかどうか判断します。",
   "agent_edit_description_collab_tooltip": "他のエージェントが委任/招待の相手を決める際(list_delegatable_agents 経由)にも表示されます——このエージェントが何が得意かを簡潔に書いてください。",
-  "agent_edit_description_required_for_collab": "協働スイッチをオンにした場合は必須です——ホストがこのエージェントの役割を知らなければ、誰を招待すべきか判断できません。",
+  "agent_edit_description_required_for_collab": "「委任を受け取れる」または「会議に参加できる」を有効にした場合は必須です——他のエージェントはこの説明を読んで選びます。発起側のスイッチだけの場合は任意です。",
   "agent_edit_generate_description_button": "✨ AI生成",
   "agent_edit_generate_description_empty_warning": "先に名前、基礎タイプ、スキル、またはシステムプロンプトを入力してください——まだ要約できるものがありません。",
   "agent_edit_generate_description_failure": "説明の生成に失敗しました",
