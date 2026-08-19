@@ -17,6 +17,26 @@ from app.agent.mcp.config import MCPServerConfig
 logger = logging.getLogger(__name__)
 
 
+def result_is_error(result: Any) -> bool:
+    """Read the protocol-level error flag off an MCP ``CallToolResult``.
+
+    The flag is ``isError`` on the wire but the SDK exposes it as the pydantic
+    field ``is_error`` — ``isError`` survives only as a serialization alias, so
+    attribute access under that name resolves to nothing and a plain
+    ``getattr(result, "isError", False)`` reports every failed call as a
+    success. Read both spellings so this works whichever SDK version is
+    installed. Absent flag → not an error, matching the protocol default.
+
+    Twin of the same helper in goku-core's ``app/agent/mcp/client.py`` — keep
+    both copies in sync.
+    """
+    for attr in ("is_error", "isError"):
+        flag = getattr(result, attr, None)
+        if flag is not None:
+            return bool(flag)
+    return False
+
+
 def _mcp_loop_exception_handler(loop: asyncio.AbstractEventLoop, context: dict) -> None:
     """Custom exception handler for the MCP background event loop.
 
@@ -148,7 +168,7 @@ class MCPServerConnection:
                     texts.append(text)
 
             return {
-                "success": not getattr(result, "isError", False),
+                "success": not result_is_error(result),
                 "output": "\n".join(texts) if texts else "",
                 "mcp_server": self.config.name,
                 "mcp_tool": tool_name,

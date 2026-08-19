@@ -190,7 +190,7 @@ const AgentList: React.FC = () => {
   const [agents, setAgents] = useState<AgentDefinition[]>([])
   const [baseTypes, setBaseTypes] = useState<BaseType[]>([])
   const [allTools, setAllTools] = useState<{ name: string; description?: string }[]>([])
-  const [mcpTools, setMcpTools] = useState<{ name: string; description?: string }[]>([])
+  const [mcpTools, setMcpTools] = useState<{ name: string; description?: string; disabled?: boolean }[]>([])
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
   const [availableRoles, setAvailableRoles] = useState<any[]>([])
   const [canonicalDepts, setCanonicalDepts] = useState<string[]>([])
@@ -262,6 +262,11 @@ const AgentList: React.FC = () => {
     }
   })
   const [form] = Form.useForm()
+  // Values already stored in allowed_tools that match no registry tool, no MCP
+  // capability and no base-type tool: imports carry bindings from other
+  // environments verbatim (nothing is dropped on purpose), so the editor has to
+  // be the place where that shows.
+  const selectedTools: string[] = Form.useWatch('allowed_tools', form) || []
   const figureInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -303,7 +308,7 @@ const AgentList: React.FC = () => {
     // MCP capabilities are sourced LIVE (not from /tools, which no longer carries
     // them) so freshly-synced capabilities appear in the dropdown immediately.
     try {
-      const mcp = await api.get<{ tools: { name: string; description?: string }[] }>('/agents/mcp-tool-options')
+      const mcp = await api.get<{ tools: { name: string; description?: string; disabled?: boolean }[] }>('/agents/mcp-tool-options')
       setMcpTools(mcp.tools || [])
     } catch {
       // ignore — MCP group will be empty
@@ -1518,13 +1523,37 @@ const AgentList: React.FC = () => {
                             const other = allTools.filter(x => !baseSet.has(x.name) && !mcpNames.has(x.name) && !x.name.includes('__'))
                             const mcp = mcpTools.filter(x => !baseSet.has(x.name))
                             const toOpt = (n: string) => ({ value: n, label: n })
+                            const known = new Set<string>([
+                              ...baseList,
+                              ...allTools.map(x => x.name),
+                              ...mcpTools.map(x => x.name),
+                            ])
+                            const missing = selectedTools.filter(v => v && !known.has(v))
+                            // A capability whose server (or the capability itself) was
+                            // switched off still sits in allowed_tools and still renders
+                            // here — mark it so the binding does not look live, and block
+                            // it from being picked for new bindings.
+                            const toMcpOpt = (x: { name: string; disabled?: boolean }) =>
+                              x.disabled
+                                ? { value: x.name, label: `${x.name}${t('agent_edit_tools_disabled_suffix')}`, disabled: true }
+                                : toOpt(x.name)
                             // The "@mcp:none" / "@mcp:focus" directive group is retired:
                             // MCP tool visibility now strictly follows this list (an MCP
                             // tool is sent to the LLM only when explicitly selected here).
                             return [
                               { label: t('agent_edit_tools_group_base'), options: baseList.map(toOpt) },
                               { label: t('agent_edit_tools_group_other'), options: other.map(x => toOpt(x.name)) },
-                              { label: t('agent_edit_tools_group_mcp'), options: mcp.map(x => toOpt(x.name)) },
+                              { label: t('agent_edit_tools_group_mcp'), options: mcp.map(toMcpOpt) },
+                              ...(missing.length
+                                ? [{
+                                    label: t('agent_edit_tools_group_missing'),
+                                    options: missing.map(n => ({
+                                      value: n,
+                                      label: `${n}${t('agent_edit_tools_missing_suffix')}`,
+                                      disabled: true,
+                                    })),
+                                  }]
+                                : []),
                             ]
                           })()}
                         />

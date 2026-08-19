@@ -181,26 +181,33 @@ def bulk_assign_agents_csv(
 def list_mcp_tool_options(db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Live MCP capability options for the agent "授权工具" selector.
 
-    Sourced directly from ``mcp_capabilities`` (active capabilities on enabled,
-    non-deleted servers), NOT from the ``tools`` table — so a freshly-synced
-    capability shows up immediately. Names use the runtime form
-    ``<server.code>__<capability_name>`` that goes into ``allowed_tools``."""
+    Sourced directly from ``mcp_capabilities`` (not the ``tools`` table) so a
+    freshly-synced capability shows up immediately. Names use the runtime form
+    ``<server.code>__<capability_name>`` that goes into ``allowed_tools``.
+
+    Disabled ones are returned too, flagged ``disabled``. A server can be
+    switched off long after agents were bound to its capabilities; dropping
+    those rows here left the editor showing a bare name with nothing to say it
+    no longer runs. The flag lets the selector mark them and stop offering them
+    for new bindings — the executor already ignores them at runtime."""
     from app.models_studio import MCPCapability, MCPServer
     rows = (
-        db.query(MCPServer.code, MCPCapability.capability_name, MCPCapability.description)
+        db.query(MCPServer.code, MCPCapability.capability_name,
+                 MCPCapability.description, MCPCapability.status, MCPServer.status)
         .join(MCPCapability, MCPCapability.server_id == MCPServer.id)
-        .filter(
-            MCPCapability.status == "active",
-            MCPServer.status == "enabled",
-            MCPServer.deleted_at.is_(None),
-        )
+        .filter(MCPServer.deleted_at.is_(None))
         .order_by(MCPServer.code, MCPCapability.capability_name)
         .all()
     )
     return {
         "tools": [
-            {"name": f"{code}__{cap_name}", "description": desc or "", "server": code}
-            for code, cap_name, desc in rows
+            {
+                "name": f"{code}__{cap_name}",
+                "description": desc or "",
+                "server": code,
+                "disabled": not (cap_status == "active" and srv_status == "enabled"),
+            }
+            for code, cap_name, desc, cap_status, srv_status in rows
         ]
     }
 
