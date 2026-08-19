@@ -267,6 +267,34 @@ const AgentList: React.FC = () => {
   // environments verbatim (nothing is dropped on purpose), so the editor has to
   // be the place where that shows.
   const selectedTools: string[] = Form.useWatch('allowed_tools', form) || []
+  // Same three-way judgement the editor's dropdown makes, lifted out so the
+  // read-only detail view can tell the identical story: a binding whose MCP
+  // server was switched off is still there (just not running), while one whose
+  // capability row is gone entirely is not. Rendering both as plain names made
+  // the two panels describe the same agent differently.
+  const toolRegistry = useMemo(() => {
+    const disabled = new Set(mcpTools.filter(x => x.disabled).map(x => x.name))
+    const live = new Set<string>([
+      ...mcpTools.filter(x => !x.disabled).map(x => x.name),
+      ...allTools.map(x => x.name),
+      ...baseTypes.flatMap(bt => bt.tools || []),
+    ])
+    return { disabled, live, loaded: mcpTools.length > 0 || allTools.length > 0 }
+  }, [mcpTools, allTools, baseTypes])
+
+  const classifyTool = (name: string): 'ok' | 'disabled' | 'missing' => {
+    if (toolRegistry.disabled.has(name)) return 'disabled'
+    if (toolRegistry.live.has(name)) return 'ok'
+    // Registries not in yet (or both requests failed) — stay silent rather than
+    // brand every binding as gone.
+    return toolRegistry.loaded ? 'missing' : 'ok'
+  }
+
+  const detailTools = useMemo(
+    () => (selectedAgent?.effective_tools || []).map(name => ({ name, status: classifyTool(name) })),
+    [selectedAgent, toolRegistry],
+  )
+  const detailToolsLive = detailTools.filter(x => x.status === 'ok').length
   const figureInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
 
@@ -2060,7 +2088,13 @@ const AgentList: React.FC = () => {
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
               <StatBox icon="🏢" label="Dept" value={normalizeDepartment(selectedAgent.department, notGroupedLabel)} />
               <StatBox icon="⚡" label="Max Steps" value={String(selectedAgent.effective_max_steps)} />
-              <StatBox icon="🧩" label="Tools" value={String(selectedAgent.effective_tools.length)} />
+              <StatBox
+                icon="🧩"
+                label="Tools"
+                value={detailToolsLive === detailTools.length
+                  ? String(detailTools.length)
+                  : `${detailToolsLive}/${detailTools.length}`}
+              />
               <StatBox icon="📚" label="Skills" value={String(selectedAgent.skills?.length || 0)} />
               <StatBox icon="🧠" label="Model" value={selectedAgent.model_override || 'default'} />
               <StatBox icon="📡" label="Status" value={selectedAgent.is_active ? 'active' : 'inactive'} />
@@ -2085,8 +2119,21 @@ const AgentList: React.FC = () => {
             <div>
               <Text type="secondary" style={{ fontSize: 12 }}>Tools</Text>
               <div style={{ marginTop: 6 }}>
-                {selectedAgent.effective_tools.map(t => (
-                  <Tag key={t} style={{ marginBottom: 4, fontSize: 11 }}>{t}</Tag>
+                {detailTools.map(({ name, status }) => (
+                  <Tag
+                    key={name}
+                    color={status === 'missing' ? 'error' : undefined}
+                    style={{
+                      marginBottom: 4,
+                      fontSize: 11,
+                      ...(status === 'disabled' ? { opacity: 0.55 } : {}),
+                      ...(status === 'missing' ? { textDecoration: 'line-through' } : {}),
+                    }}
+                  >
+                    {name}
+                    {status === 'disabled' && t('agent_edit_tools_disabled_suffix')}
+                    {status === 'missing' && t('agent_edit_tools_missing_suffix')}
+                  </Tag>
                 ))}
               </div>
             </div>
