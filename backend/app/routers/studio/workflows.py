@@ -610,21 +610,32 @@ def list_executions(
     workflow = _workflow_query(db).filter(models.Workflow.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    query = db.query(models.WorkflowExecution).filter(models.WorkflowExecution.workflow_id == workflow_id)
-    total = query.count()
-    items = query.order_by(models.WorkflowExecution.started_at.desc()).offset((page - 1) * size).limit(size).all()
+    E = models.WorkflowExecution
+    total = db.query(E).filter(E.workflow_id == workflow_id).count()
+    # Project only the small columns this list needs. Selecting the full row pulls
+    # `variables` — a JSON column that holds the entire DAG output (for MCP-backed
+    # workflows that can be several MB) — and ORDER BY started_at then overflows
+    # MySQL's sort buffer (error 1038). The list view never uses `variables`.
+    rows = (
+        db.query(E.id, E.status, E.resume_from_layer, E.error_message, E.started_at, E.completed_at)
+        .filter(E.workflow_id == workflow_id)
+        .order_by(E.started_at.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+        .all()
+    )
     return {
         "total": total,
         "items": [
             {
-                "id": ex.id,
-                "status": ex.status,
-                "resume_from_layer": ex.resume_from_layer,
-                "error_message": ex.error_message,
-                "started_at": ex.started_at,
-                "completed_at": ex.completed_at,
+                "id": r.id,
+                "status": r.status,
+                "resume_from_layer": r.resume_from_layer,
+                "error_message": r.error_message,
+                "started_at": r.started_at,
+                "completed_at": r.completed_at,
             }
-            for ex in items
+            for r in rows
         ],
     }
 

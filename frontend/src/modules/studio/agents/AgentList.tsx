@@ -626,6 +626,11 @@ const AgentList: React.FC = () => {
 
   const handleView = (agent: AgentDefinition) => {
     setSelectedAgent(agent)
+    // Re-read the registries on open, as handleEdit does. A server is disabled
+    // before it can be deleted, so a list cached from before the delete still
+    // describes it as merely switched off — the panel would keep saying 停用
+    // about something that is gone until the page is reloaded.
+    fetchAllTools()
     setDetailVisible(true)
   }
 

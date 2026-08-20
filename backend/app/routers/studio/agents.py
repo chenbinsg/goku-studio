@@ -177,6 +177,12 @@ def bulk_assign_agents_csv(
     return result
 
 
+# Capability statuses a binding may be offered for. ``inactive`` is absent on
+# purpose — it marks a capability the upstream no longer exposes, or one retired
+# by its server's deletion, and neither can be turned back on.
+SELECTABLE_CAPABILITY_STATUSES = ("active", "disabled")
+
+
 @router.get("/mcp-tool-options")
 def list_mcp_tool_options(db: Session = Depends(get_db), user=Depends(get_current_user)):
     """Live MCP capability options for the agent "授权工具" selector.
@@ -185,17 +191,27 @@ def list_mcp_tool_options(db: Session = Depends(get_db), user=Depends(get_curren
     freshly-synced capability shows up immediately. Names use the runtime form
     ``<server.code>__<capability_name>`` that goes into ``allowed_tools``.
 
-    Disabled ones are returned too, flagged ``disabled``. A server can be
-    switched off long after agents were bound to its capabilities; dropping
-    those rows here left the editor showing a bare name with nothing to say it
-    no longer runs. The flag lets the selector mark them and stop offering them
-    for new bindings — the executor already ignores them at runtime."""
+    Capability status is a trichotomy, not a boolean:
+
+      ``active``    exposed by the upstream right now
+      ``disabled``  an admin switched it off — still there, re-enablable
+      ``inactive``  a tombstone: the upstream stopped exposing it (sync-retired)
+                    or its server was deleted (the delete cascade retires them)
+
+    Only the first two are part of a server's current surface, so only those are
+    offered — matching what the capability admin list shows. Tombstones must not
+    appear at all: a capability from a deleted server labelled "switched off"
+    reads as something an admin can turn back on, and nothing here can.
+    ``disabled`` ones ARE returned, flagged, because an agent can be bound to a
+    capability that was switched off long afterwards and the editor has to say
+    so rather than show a bare name."""
     from app.models_studio import MCPCapability, MCPServer
     rows = (
         db.query(MCPServer.code, MCPCapability.capability_name,
                  MCPCapability.description, MCPCapability.status, MCPServer.status)
         .join(MCPCapability, MCPCapability.server_id == MCPServer.id)
         .filter(MCPServer.deleted_at.is_(None))
+        .filter(MCPCapability.status.in_(SELECTABLE_CAPABILITY_STATUSES))
         .order_by(MCPServer.code, MCPCapability.capability_name)
         .all()
     )
