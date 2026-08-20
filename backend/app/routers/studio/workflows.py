@@ -493,13 +493,17 @@ def update_workflow(
 @router.post("/{workflow_id}/execute", response_model=schemas.WorkflowExecuteResponse)
 async def execute_workflow(
     workflow_id: str,
-    execute_data: schemas.WorkflowExecute,
     request: Request,
+    execute_data: schemas.WorkflowExecute | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
     from app.services import core_runtime_proxy
 
+    # The body is optional. The designer's Run button posts no body at all, which
+    # otherwise fails FastAPI validation with 422 "body Field required". Default to
+    # an empty request (variables={}, dry_run=False) before forwarding to core.
+    execute_data = execute_data or schemas.WorkflowExecute()
     workflow = _workflow_query(db).filter(models.Workflow.id == workflow_id).first()
     if not workflow:
         raise HTTPException(status_code=404, detail="Workflow not found")
