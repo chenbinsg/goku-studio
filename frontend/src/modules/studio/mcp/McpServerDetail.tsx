@@ -1559,12 +1559,17 @@ const CallLogsTab: React.FC<{
   const columns = [
     { title: t('mcp_detail_calls_col_time'), dataIndex: 'called_at', key: 'called_at', render: fmt, width: 160 },
     { title: t('mcp_detail_calls_col_user'), dataIndex: 'user_name', key: 'user', width: 100, render: (v?: string) => v || '-' },
-    { title: t('mcp_detail_calls_col_session'), dataIndex: 'session_id', key: 'session', width: 100,
-      render: (v?: string) => v ? <Text code>{v.slice(0, 8)}…</Text> : '-' },
-    { title: t('mcp_detail_calls_col_tool'), dataIndex: 'ai_tool_name', key: 'tool', width: 140, ellipsis: true,
-      render: (v?: string) => v || <Text type="secondary">{t('mcp_detail_calls_tool_mcp_test')}</Text> },
-    { title: t('mcp_detail_calls_col_server'), dataIndex: 'mcp_server_name', key: 'server', width: 140, ellipsis: true,
-      render: (v?: string) => v || '-' },
+    { title: t('mcp_detail_calls_col_session'), dataIndex: 'session_id', key: 'session', width: 340,
+      render: (v?: string) => v ? <Text code copyable style={{ whiteSpace: 'nowrap' }}>{v}</Text> : '-' },
+    { title: t('mcp_detail_calls_col_tool'), dataIndex: 'ai_tool_name', key: 'tool', width: 160, ellipsis: true,
+      // The caller: an AI Tool call shows the tool name; an agent call shows the
+      // agent name (principal_name); a manual MCP test shows the test label.
+      render: (v: string | undefined, r: any) =>
+        v || r?.principal_name || (
+          r?.invoke_type === 'mcp_test'
+            ? <Text type="secondary">{t('mcp_detail_calls_tool_mcp_test')}</Text>
+            : <Text type="secondary">-</Text>
+        ) },
     { title: t('mcp_detail_calls_col_capability'), dataIndex: 'mcp_capability_name', key: 'cap', width: 200, ellipsis: true },
     {
       title: t('mcp_detail_calls_col_invoke_type'), dataIndex: 'invoke_type', key: 'itype', width: 110,

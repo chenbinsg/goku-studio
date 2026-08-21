@@ -266,6 +266,8 @@ def list_call_logs(
             mcp_capability_name=r.mcp_capability_name,
             ai_tool_id=r.ai_tool_id,
             ai_tool_name=r.ai_tool_name,
+            principal_type=r.principal_type,
+            principal_name=r.principal_name,
             user_id=r.user_id,
             user_name=user_names.get(r.user_id) if r.user_id else None,
             session_id=r.session_id,

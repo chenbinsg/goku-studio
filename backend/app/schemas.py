@@ -1509,6 +1509,8 @@ class MCPCallLogItem(BaseModel):
     mcp_capability_name: str
     ai_tool_id: str | None = None
     ai_tool_name: str | None = None
+    principal_type: str | None = None  # 'agent' | 'ai_tool' | … — who invoked it
+    principal_name: str | None = None  # the caller's display name (agent name / tool name)
     user_id: str | None = None
     user_name: str | None = None  # joined via users table
     session_id: str | None = None

@@ -1549,6 +1549,32 @@ const AgentList: React.FC = () => {
                           showSearch
                           optionFilterProp="value"
                           placeholder={t('agent_edit_tools_placeholder')}
+                          // rc-select drops the close button on any tag whose option is
+                          // disabled, which strands a binding to a switched-off or deleted
+                          // capability in the field with no way to take it out. Render the
+                          // tag here so it always closes; the option stays disabled in the
+                          // dropdown so a dead name still cannot be picked again.
+                          tagRender={({ label, value, onClose }) => {
+                            const status = classifyTool(String(value))
+                            return (
+                              <Tag
+                                closable
+                                onClose={onClose}
+                                onMouseDown={e => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                }}
+                                color={status === 'missing' ? 'error' : undefined}
+                                style={{
+                                  marginInlineEnd: 4,
+                                  ...(status === 'disabled' ? { opacity: 0.55 } : {}),
+                                  ...(status === 'missing' ? { textDecoration: 'line-through' } : {}),
+                                }}
+                              >
+                                {label}
+                              </Tag>
+                            )
+                          }}
                           options={(() => {
                             const baseList = selectedBaseType?.tools || []
                             const baseSet = new Set(baseList)
