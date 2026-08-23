@@ -185,6 +185,9 @@ def list_workflows(
                 "description": w.description,
                 "version": w.version,
                 "created_at": w.created_at,
+                # agent_id lets the chat UI auto-select the workflow's bound agent
+                # when a workflow is picked (see ChatToolbar workflow selector).
+                "agent_id": getattr(w, "agent_id", None),
             }
             for w in items
         ],

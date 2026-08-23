@@ -27,7 +27,9 @@ import {
   Card,
   Form,
   Select,
+  AutoComplete,
   InputNumber,
+  Switch,
   Drawer,
   Space,
   Typography,
@@ -36,6 +38,7 @@ import {
   Divider,
   Badge,
   Tooltip,
+  Alert,
 } from 'antd'
 import {
   PlusOutlined,
@@ -52,6 +55,7 @@ import {
   LoadingOutlined,
   ApiOutlined,
   CodeOutlined,
+  ToolOutlined,
   HolderOutlined,
 } from '@ant-design/icons'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
@@ -62,7 +66,7 @@ const { Text } = Typography
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type NodeType = 'task' | 'condition' | 'code' | 'parallel' | 'approval' | 'wait' | 'http_request' | 'start' | 'end'
+type NodeType = 'task' | 'condition' | 'code' | 'tool_call' | 'parallel' | 'join' | 'approval' | 'wait' | 'http_request' | 'start' | 'end'
 
 interface NodeData {
   label: string
@@ -72,14 +76,27 @@ interface NodeData {
   timeout?: number
   tools?: string[]
   use_agent?: boolean
-  // condition
-  expression?: string
+  // condition — these are the fields the engine actually reads (see
+  // workflow_engine.execute_node): it evaluates variables[variable] against value
+  // with operator, then jumps to true_branch / false_branch.
+  variable?: string
+  operator?: string
+  value?: unknown
+  true_branch?: string
+  false_branch?: string
+  expression?: string   // legacy, unused by the engine — kept so old DAGs round-trip
   description?: string
   // approval
   risk_level?: number
   timeout_seconds?: number
   // wait
   seconds?: number
+  // code
+  code?: string
+  // tool_call
+  tool?: string
+  params?: Record<string, unknown>
+  ignore_error?: boolean
   // http_request
   method?: string
   url?: string
@@ -108,7 +125,9 @@ const NODE_COLORS: Record<string, string> = {
   task:         '#1677ff',
   condition:    '#faad14',
   code:         '#531dab',
+  tool_call:    '#eb2f96',
   parallel:     '#722ed1',
+  join:         '#2f54eb',
   approval:     '#fa8c16',
   wait:         '#8c8c8c',
   http_request: '#13c2c2',
@@ -302,13 +321,45 @@ const CodeNode: React.FC<NodeProps> = ({ data, selected }) => (
   </NodeWrapper>
 )
 
+const ToolCallNode: React.FC<NodeProps> = ({ data, selected }) => (
+  <NodeWrapper color={NODE_COLORS.tool_call} selected={!!selected} execStatus={(data as NodeData)._execStatus}>
+    <Handle type="target" position={Position.Top} />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+      <ToolOutlined style={{ color: NODE_COLORS.tool_call, fontSize: 14 }} />
+      <span style={{ fontWeight: 600, fontSize: 13 }}>{(data as NodeData).label || 'Tool call'}</span>
+    </div>
+    {(data as NodeData).tool && (
+      <div style={{ fontSize: 11, color: '#888', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        {(data as NodeData).tool as string}
+      </div>
+    )}
+    {(data as NodeData).output_variable && (
+      <Tag color="magenta" style={{ fontSize: 10, marginTop: 4 }}>→ {(data as NodeData).output_variable as string}</Tag>
+    )}
+    <Handle type="source" position={Position.Bottom} />
+  </NodeWrapper>
+)
+
+const JoinNode: React.FC<NodeProps> = ({ data, selected }) => (
+  <NodeWrapper color={NODE_COLORS.join} selected={!!selected} execStatus={(data as NodeData)._execStatus}>
+    <Handle type="target" position={Position.Top} />
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+      <ForkOutlined style={{ color: NODE_COLORS.join, fontSize: 14, transform: 'rotate(180deg)' }} />
+      <span style={{ fontWeight: 600, fontSize: 13 }}>{(data as NodeData).label || 'Join'}</span>
+    </div>
+    <Handle type="source" position={Position.Bottom} />
+  </NodeWrapper>
+)
+
 const nodeTypes: NodeTypes = {
   start:        StartNode,
   end:          EndNode,
   task:         TaskNode,
   condition:    ConditionNode,
   code:         CodeNode,
+  tool_call:    ToolCallNode,
   parallel:     ParallelNode,
+  join:         JoinNode,
   approval:     ApprovalNode,
   wait:         WaitNode,
   http_request: HttpRequestNode,
@@ -349,6 +400,24 @@ function rfToDag(nodes: Node[], edges: Edge[]): DagData {
     }
   })
   return { nodes: dagNodes }
+}
+
+// Put back the nodes dagToRf hid from the canvas, plus the depends_on entries that
+// pointed at them, so an edit round-trip never silently deletes them.
+function restoreHiddenDagNodes(dag: DagData, loaded: DagNode[]): void {
+  if (!loaded.length) return
+  const onCanvas = new Set(dag.nodes.map((n) => n.id))
+  const hidden = loaded.filter((n) => !onCanvas.has(n.id))
+  if (!hidden.length) return
+  const hiddenIds = new Set(hidden.map((n) => n.id))
+  const loadedById = new Map(loaded.map((n) => [n.id, n]))
+  dag.nodes.forEach((n) => {
+    const before = loadedById.get(n.id)
+    if (!before) return
+    const lost = (before.depends_on || []).filter((dep) => hiddenIds.has(dep))
+    if (lost.length) n.depends_on = [...n.depends_on, ...lost]
+  })
+  dag.nodes.push(...hidden)
 }
 
 function dagToRf(dag: DagData): { nodes: Node[]; edges: Edge[] } {
@@ -406,11 +475,46 @@ const defaultEdges: Edge[] = [{
 
 const DEFAULT_NODE_DATA: Record<string, Partial<NodeData>> = {
   task:         { label: 'New Task',    model: 'claude-3-5-sonnet', prompt: '', timeout: 300 },
-  condition:    { label: 'Condition',   expression: "result.status == 'success'", description: '' },
+  condition:    { label: 'Condition',   variable: '', operator: '==', value: '', true_branch: '', false_branch: '', description: '' },
   parallel:     { label: 'Parallel',   description: '' },
+  join:         { label: 'Join' },
   approval:     { label: 'Approval',   description: '', risk_level: 1, timeout_seconds: 3600 },
   wait:         { label: 'Wait',       seconds: 30 },
   http_request: { label: 'HTTP Request', method: 'GET', url: '', headers: '', body: '', output_variable: '', http_timeout: 30 },
+  // ignore_error defaults to true to match the engine's own default for tool_call.
+  tool_call:    { label: 'Tool call', tool: '', params: {}, timeout: 120, ignore_error: true, output_variable: '' },
+}
+
+// Operators accepted by the engine's _evaluate_condition, in the same order.
+const CONDITION_OPERATORS = [
+  '==', '!=', '>', '>=', '<', '<=', 'in', 'contains', 'not_contains', 'is_empty', 'is_not_empty',
+]
+
+// Turn the condition's comparison value back into a real JSON scalar: the engine compares
+// with == before any casting, so a typed "5" or "true" must not stay a string.
+const coerceConditionValue = (raw: unknown): unknown => {
+  const text = String(raw ?? '').trim()
+  if (text === '') return ''
+  if (text === 'true') return true
+  if (text === 'false') return false
+  if (text === 'null') return null
+  if (/^-?\d+(\.\d+)?$/.test(text)) return Number(text)
+  return text
+}
+
+// Fields the properties drawer actually edits, per node type. Applying changes writes
+// only these (plus label), so a node never absorbs unrelated defaults from the shared
+// form — a tool_call node used to come back with method/url/prompt merged into its config.
+const TYPE_FIELDS: Record<string, string[]> = {
+  task:         ['prompt', 'tools', 'model', 'timeout'],
+  condition:    ['variable', 'operator', 'value', 'true_branch', 'false_branch', 'description'],
+  parallel:     ['description'],
+  join:         [],
+  approval:     ['description', 'risk_level', 'timeout_seconds'],
+  wait:         ['seconds'],
+  code:         ['code', 'output_variable', 'timeout'],
+  http_request: ['method', 'url', 'headers', 'body', 'output_variable', 'http_timeout'],
+  tool_call:    ['tool', 'params', 'timeout', 'ignore_error', 'output_variable'],
 }
 
 // ─── Inner designer (must be inside ReactFlowProvider) ───────────────────────
@@ -427,6 +531,14 @@ const WorkflowDesignerInner: React.FC = () => {
   const [workflowName, setWorkflowName] = useState('')
   const [workflowDesc, setWorkflowDesc] = useState('')
   const [workflowAgentId, setWorkflowAgentId] = useState<string | undefined>(undefined)
+  // Carried through save untouched: the portable _workflow_key (set by import/export)
+  // and any workflow variables live here, and a DAG-only save must not drop them.
+  const [workflowVariables, setWorkflowVariables] = useState<Record<string, unknown>>({})
+  // Same for triggers: the designer has no trigger UI, so a save must return whatever the
+  // workflow already had. Sending a hardcoded [manual] demoted cron/webhook triggers.
+  // Round-tripping the sanitized form is safe — the backend re-attaches the stored
+  // webhook secret_enc from existing_triggers (see _prepare_workflow_triggers).
+  const [workflowTriggers, setWorkflowTriggers] = useState<Record<string, unknown>[]>([{ type: 'manual' }])
   const [availableAgents, setAvailableAgents] = useState<{ id: string; name: string }[]>([])
   const [saving,   setSaving]   = useState(false)
   const [running,  setRunning]  = useState(false)
@@ -436,6 +548,10 @@ const WorkflowDesignerInner: React.FC = () => {
   const [nodeForm] = Form.useForm()
   const nodeIdCounter  = useRef(100)
   const savedWorkflowId = useRef<string | null>(workflowId)
+  // dagToRf hides the send_email node from the canvas, so rfToDag would drop it — and the
+  // dependencies pointing at it — on the next save. Keep the loaded DAG so save can put
+  // the hidden nodes and their edges back.
+  const loadedDagNodes = useRef<DagNode[]>([])
   const [availableTools, setAvailableTools] = useState<{ name: string; description: string }[]>([])
   const [availableModels, setAvailableModels] = useState<string[]>([])
   const [executionId,     setExecutionId]     = useState<string | null>(null)
@@ -532,7 +648,10 @@ const WorkflowDesignerInner: React.FC = () => {
       setWorkflowName(wf.name || '')
       setWorkflowDesc(wf.description || '')
       setWorkflowAgentId(wf.agent_id || undefined)
+      setWorkflowVariables(wf.variables || {})
+      if (Array.isArray(wf.triggers) && wf.triggers.length > 0) setWorkflowTriggers(wf.triggers)
       if (wf.dag?.nodes?.length > 0) {
+        loadedDagNodes.current = (wf.dag as DagData).nodes || []
         const { nodes: rfNodes, edges: rfEdges } = dagToRf(wf.dag as DagData)
         setNodes(rfNodes)
         setEdges(rfEdges)
@@ -589,10 +708,19 @@ const WorkflowDesignerInner: React.FC = () => {
       nodeForm.setFieldsValue({
         label:           d.label            || '',
         prompt:          d.prompt           || '',
+        code:            d.code             || '',
+        tool:            d.tool             || '',
+        params:          JSON.stringify(d.params ?? {}, null, 2),
+        ignore_error:    d.ignore_error     ?? true,
         model:           d.model            || 'claude-3-5-sonnet',
         timeout:         d.timeout          ?? 300,
         tools:           d.tools            || [],
         expression:      d.expression       || '',
+        variable:        d.variable         || '',
+        operator:        d.operator         || '==',
+        value:           d.value === undefined || d.value === null ? '' : String(d.value),
+        true_branch:     d.true_branch      || undefined,
+        false_branch:    d.false_branch     || undefined,
         description:     d.description      || '',
         risk_level:      d.risk_level       ?? 1,
         timeout_seconds: d.timeout_seconds  ?? 3600,
@@ -613,8 +741,25 @@ const WorkflowDesignerInner: React.FC = () => {
   const handleUpdateNode = () => {
     if (!selectedNode) return
     const values = nodeForm.getFieldsValue()
+    const type = selectedNode.type || 'task'
+    const next: Record<string, unknown> = { label: values.label }
+    ;(TYPE_FIELDS[type] || []).forEach((key) => { if (key in values) next[key] = values[key] })
+    // params is edited as JSON text; refuse the save rather than storing a string
+    // where the engine expects an object.
+    if (type === 'condition') {
+      next.value = coerceConditionValue(values.value)
+    }
+    if (type === 'tool_call') {
+      const raw = String(values.params ?? '').trim()
+      try {
+        next.params = raw ? JSON.parse(raw) : {}
+      } catch {
+        message.error(t('wf_tool_params_invalid'))
+        return
+      }
+    }
     setNodes((nds) => nds.map((n) =>
-      n.id === selectedNode.id ? { ...n, data: { ...n.data, ...values } as NodeData } : n,
+      n.id === selectedNode.id ? { ...n, data: { ...n.data, ...next } as NodeData } : n,
     ))
     setDrawerOpen(false)
     setSelectedNode(null)
@@ -635,7 +780,8 @@ const WorkflowDesignerInner: React.FC = () => {
     setSaving(true)
     try {
       const dag     = rfToDag(nodes, edges)
-      const payload = { name: workflowName, description: workflowDesc, dag, triggers: [{ type: 'manual' }], variables: {}, agent_id: workflowAgentId ?? null }
+      restoreHiddenDagNodes(dag, loadedDagNodes.current)
+      const payload = { name: workflowName, description: workflowDesc, dag, triggers: workflowTriggers, variables: workflowVariables, agent_id: workflowAgentId ?? null }
       if (savedWorkflowId.current) {
         await workflowApi.update(savedWorkflowId.current, payload)
         message.success(t('workflow_designer_save_success'))
@@ -676,13 +822,30 @@ const WorkflowDesignerInner: React.FC = () => {
     }
   }
 
+  // Branch targets for a condition node: the nodes it actually connects to come first
+  // (that is nearly always what you want), with every other node still selectable.
+  const branchOptions = React.useMemo(() => {
+    const downstream = edges.filter((e) => e.source === selectedNode?.id).map((e) => e.target)
+    const labelOf = (id: string) => {
+      const n = nodes.find((x) => x.id === id)
+      const text = (n?.data as NodeData | undefined)?.label
+      return text ? `${text} (${id})` : id
+    }
+    const rest = nodes
+      .map((n) => n.id)
+      .filter((id) => id !== selectedNode?.id && !downstream.includes(id))
+    return [...downstream, ...rest].map((id) => ({ label: labelOf(id), value: id }))
+  }, [edges, nodes, selectedNode])
+
   // ── Palette items (i18n labels set at render time) ─────────────────────────
   type PaletteItem = { type: NodeType; labelKey: string; icon: React.ReactNode; color: string }
   const PALETTE_ITEMS: PaletteItem[] = [
     { type: 'task',         labelKey: 'workflow_designer_node_task',      icon: <RobotOutlined />,       color: NODE_COLORS.task },
     { type: 'condition',    labelKey: 'workflow_designer_node_condition',  icon: <BranchesOutlined />,    color: NODE_COLORS.condition },
     { type: 'code',         labelKey: 'workflow_designer_node_code',       icon: <CodeOutlined />,        color: NODE_COLORS.code },
+    { type: 'tool_call',    labelKey: 'workflow_designer_node_tool_call',  icon: <ToolOutlined />,        color: NODE_COLORS.tool_call },
     { type: 'parallel',     labelKey: 'workflow_designer_node_parallel',   icon: <ForkOutlined />,        color: NODE_COLORS.parallel },
+    { type: 'join',         labelKey: 'workflow_designer_node_join',       icon: <ForkOutlined rotate={180} />, color: NODE_COLORS.join },
     { type: 'approval',     labelKey: 'workflow_designer_node_approval',   icon: <CheckCircleOutlined />, color: NODE_COLORS.approval },
     { type: 'wait',         labelKey: 'workflow_designer_node_wait',       icon: <ClockCircleOutlined />, color: NODE_COLORS.wait },
     { type: 'http_request', labelKey: 'workflow_designer_node_http',       icon: <ApiOutlined />,         color: NODE_COLORS.http_request },
@@ -726,8 +889,25 @@ const WorkflowDesignerInner: React.FC = () => {
 
         {type === 'condition' && (
           <>
-            <Form.Item label={t('workflow_designer_expression')} name="expression" extra={t('workflow_designer_expression_hint')}>
-              <Input.TextArea rows={2} />
+            <Form.Item
+              label={t('wf_cond_variable_label')}
+              name="variable"
+              extra={t('wf_cond_variable_extra')}
+              rules={[{ required: true, message: t('wf_cond_variable_required') }]}
+            >
+              <Input placeholder="tool_result" />
+            </Form.Item>
+            <Form.Item label={t('wf_cond_operator_label')} name="operator">
+              <Select options={CONDITION_OPERATORS.map((op) => ({ label: op, value: op }))} />
+            </Form.Item>
+            <Form.Item label={t('wf_cond_value_label')} name="value" extra={t('wf_cond_value_extra')}>
+              <Input />
+            </Form.Item>
+            <Form.Item label={t('wf_cond_true_label')} name="true_branch" extra={t('wf_cond_branch_extra')}>
+              <Select allowClear showSearch options={branchOptions} />
+            </Form.Item>
+            <Form.Item label={t('wf_cond_false_label')} name="false_branch">
+              <Select allowClear showSearch options={branchOptions} />
             </Form.Item>
             <Form.Item label={t('workflow_designer_description')} name="description">
               <Input.TextArea rows={2} />
@@ -736,9 +916,16 @@ const WorkflowDesignerInner: React.FC = () => {
         )}
 
         {type === 'parallel' && (
-          <Form.Item label={t('workflow_designer_description')} name="description">
-            <Input.TextArea rows={2} />
-          </Form.Item>
+          <>
+            <Alert type="warning" showIcon style={{ marginBottom: 12 }} message={t('wf_parallel_noop_warning')} />
+            <Form.Item label={t('workflow_designer_description')} name="description">
+              <Input.TextArea rows={2} />
+            </Form.Item>
+          </>
+        )}
+
+        {type === 'join' && (
+          <Alert type="info" showIcon style={{ marginBottom: 12 }} message={t('wf_join_hint')} />
         )}
 
         {type === 'approval' && (
@@ -787,6 +974,51 @@ const WorkflowDesignerInner: React.FC = () => {
             </Form.Item>
             <Form.Item label={t('wf_timeout_label')} name="timeout">
               <InputNumber min={1} max={300} style={{ width: '100%' }} />
+            </Form.Item>
+          </>
+        )}
+
+        {type === 'tool_call' && (
+          <>
+            <Form.Item
+              label={t('wf_tool_name_label')}
+              name="tool"
+              extra={t('wf_tool_name_extra')}
+              rules={[{ required: true, message: t('wf_tool_name_required') }]}
+            >
+              <AutoComplete
+                allowClear
+                options={availableTools.map((tool) => ({ value: tool.name, label: tool.name }))}
+                filterOption={(input, option) =>
+                  String(option?.value ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+                placeholder="server_code__capability_name"
+              />
+            </Form.Item>
+            <Form.Item
+              label={t('wf_tool_params_label')}
+              name="params"
+              extra={<>{t('wf_tool_params_extra')} <code>{'{{variable}}'}</code></>}
+            >
+              <Input.TextArea
+                rows={12}
+                placeholder={'{\n  "key": "value"\n}'}
+                style={{ fontFamily: 'monospace', fontSize: 12 }}
+              />
+            </Form.Item>
+            <Form.Item label={t('wf_output_var_label')} name="output_variable" extra={t('wf_output_var_extra')}>
+              <Input placeholder="tool_result" />
+            </Form.Item>
+            <Form.Item label={t('wf_timeout_label')} name="timeout">
+              <InputNumber min={1} max={86400} style={{ width: '100%' }} />
+            </Form.Item>
+            <Form.Item
+              label={t('wf_ignore_error_label')}
+              name="ignore_error"
+              valuePropName="checked"
+              extra={t('wf_ignore_error_extra')}
+            >
+              <Switch />
             </Form.Item>
           </>
         )}
