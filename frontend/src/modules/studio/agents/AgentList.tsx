@@ -965,7 +965,7 @@ const AgentList: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: 24, minHeight: '100vh', background: '#f6f8fb' }}>
+    <div style={{ padding: '4px 24px 24px', minHeight: '100vh', background: '#f6f8fb' }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24, gap: 16, flexWrap: 'wrap' }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>
