@@ -645,7 +645,6 @@ export const agentApi = {
   baseTypes: () => api.get<{ agent_types: any[] }>('/agents/base-types'),
   skills: () => api.get<{ root: string; skills: any[] }>('/agents/skills'),
   skillContent: (id: string) => api.get<{ id: string; content: string }>(`/agents/skills/${id}/content`),
-  saveSkillContent: (id: string, content: string) => api.put<{ id: string; content: string; bytes: number }>(`/agents/skills/${id}/content`, { content }),
   // Favorites
   toggleFavorite: (agentId: string) =>
     api.post<{ favorited: boolean; agent_id: string }>(`/agents/${agentId}/favorite`),
@@ -811,6 +810,145 @@ export const autoSkillApi = {
     api.post<{ deleted: number; ids: string[]; git_removed: number }>('/auto-skills/bulk-delete', body),
   search: (data: { query: string; top_k?: number }) =>
     api.post<{ items: any[] }>('/auto-skills/search', data),
+  // 入库 — copy a candidate into the Skill 库. Lands disabled; the operator
+  // reviews the text there and enables it separately.
+  promote: (id: string, data: { code?: string; category?: string }) =>
+    api.post<{ promoted: boolean; skill: Skill; note: string }>(`/auto-skills/${id}/promote`, data),
+}
+
+// ── Skill 库 ─────────────────────────────────────────────────────────────────
+// The pool agents bind to. Auto Skill candidates live in autoSkillApi above and
+// cannot be bound or loaded until they are 入库'd into this one.
+
+export interface Skill {
+  id: string
+  code: string
+  name: string
+  description: string
+  category: string | null
+  status: 'active' | 'disabled' | 'deleted'
+  origin: 'manual' | 'agent' | 'auto' | 'import'
+  auto_injectable: boolean
+  source_auto_skill_id: string | null
+  version: number
+  /** The revision agents actually get — behind `version` while a flagged edit
+   *  waits for a second person to review it. */
+  active_version: number
+  needs_review: boolean
+  /** Who has a version waiting. On list rows this is all the review info there
+   *  is — enough to decide which buttons a given person gets, since you may
+   *  review someone else's draft but never your own. Names are for display;
+   *  the ids are what authorship is decided on, because a username can be
+   *  freed by a deletion and reused by someone else. */
+  pending_authors: string[]
+  pending_author_ids: string[]
+  /** Every version still awaiting a decision, newest first. More than one is
+   *  normal — an author can submit again while an earlier draft is queued, and
+   *  neither retires the other. Detail responses only. */
+  pending?: SkillPending[]
+  /** Scanned live against `content` on read — use this for highlighting, since
+   *  a revision's stored findings are a snapshot from write time. */
+  content_findings?: SkillFinding[]
+  /** `content` is what agents get right now; `head_content` is the last text
+   *  submitted, approved or not. Edit from the head, display the live one. */
+  head_version?: number
+  head_content?: string
+  /** Findings on the write that just happened (advisory ones). */
+  warnings?: SkillFinding[]
+  updated_at: string
+  updated_by: string | null
+  content?: string
+  usage?: SkillUsage
+  deleted_at?: string | null
+  deleted_bindings?: { agent_id: string; agent_name: string; unbound_at: string }[]
+}
+
+export interface SkillPending {
+  version: number
+  author: string | null
+  author_id: string | null
+  message: string | null
+  created_at: string
+  findings: SkillFinding[]
+}
+
+export interface SkillFinding {
+  severity: string
+  kind: string
+  detail: string
+  /** Where in the content this was found, so the reviewer can be shown the
+   *  actual lines instead of hunting for them. */
+  matches?: { text: string; start: number; end: number; label?: string }[]
+}
+
+export interface SkillUsage {
+  active_count: number
+  inactive_count: number
+  agents: { id: string; name: string; slug: string | null; is_active: boolean }[]
+}
+
+export interface SkillRevision {
+  version: number
+  message: string | null
+  author: string | null
+  created_at: string
+  review_status: 'approved' | 'pending' | 'rejected' | 'withdrawn'
+  review_findings: SkillFinding[]
+  author_id: string | null
+  reviewed_by: string | null
+  reviewed_at: string | null
+}
+
+export const skillApi = {
+  list: (params?: { status?: string; keyword?: string; category?: string; include_deleted?: boolean }) =>
+    api.get<{ items: Skill[]; total: number }>('/skills', { params }),
+  get: (id: string) => api.get<Skill>(`/skills/${id}`),
+  create: (data: {
+    code: string; name: string; content: string
+    description?: string; category?: string | null
+    status?: string; auto_injectable?: boolean
+  }) => api.post<Skill>('/skills', data),
+  update: (id: string, data: {
+    code?: string; name?: string; content?: string
+    description?: string; category?: string | null
+    auto_injectable?: boolean; message?: string
+  }) => api.patch<Skill>(`/skills/${id}`, data),
+  setStatus: (id: string, status: 'active' | 'disabled') =>
+    api.post<Skill>(`/skills/${id}/status`, { status }),
+  // Soft delete. Resolves with the receipt: which agents lost the skill.
+  delete: (id: string) =>
+    api.delete<{ skill_id: string; code: string; unbound: { agent_id: string; agent_name: string }[] }>(`/skills/${id}`),
+  usage: (id: string) => api.get<SkillUsage>(`/skills/${id}/usage`),
+  revisions: (id: string) => api.get<{ items: SkillRevision[] }>(`/skills/${id}/revisions`),
+  revision: (id: string, version: number) =>
+    api.get<{
+      version: number; content: string; message: string | null
+      author: string | null; created_at: string
+      review_status: SkillRevision['review_status']
+      reviewed_by: string | null; reviewed_at: string | null
+      /** Scanned against THIS revision's body — the skill's own
+       *  `content_findings` describe the live version, not a queued draft. */
+      findings: SkillFinding[]
+    }>(`/skills/${id}/revisions/${version}`),
+  rollback: (id: string, version: number) =>
+    api.post<Skill>(`/skills/${id}/revisions/${version}/rollback`),
+  // Review is per version: several can be waiting, and the reviewer has to say
+  // which one they actually read.
+  approveReview: (id: string, version: number) =>
+    api.post<Skill>(`/skills/${id}/review/${version}/approve`),
+  rejectReview: (id: string, version: number, reason: string) =>
+    api.post<Skill>(`/skills/${id}/review/${version}/reject`, { reason }),
+  /** Take back your own pending draft — author only. */
+  withdrawReview: (id: string, version: number) =>
+    api.post<Skill>(`/skills/${id}/review/${version}/withdraw`),
+  exportRevision: (id: string, version: number) =>
+    api.get<any>(`/skills/${id}/revisions/${version}/export`),
+  export: (body: { ids?: string[]; all?: boolean; include_deleted?: boolean }) =>
+    api.post<any>('/skills/export', body),
+  // dry_run returns what WOULD happen without writing — the preview has to be
+  // accurate before anything is committed.
+  import: (body: { skills: any[]; on_conflict?: 'update' | 'skip'; dry_run?: boolean }) =>
+    api.post<any>('/skills/import', body),
 }
 
 // Analytics API

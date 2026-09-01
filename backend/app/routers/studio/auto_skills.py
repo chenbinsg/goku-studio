@@ -221,23 +221,8 @@ def bulk_delete_skills(payload: AutoSkillBulkDelete, db: Session = Depends(get_d
         db.delete(s)
     db.commit()
 
-    git_removed = 0
-    try:
-        from app.services import skills_repo
-        if skills_repo.is_enabled():
-            for name in approved_names:
-                try:
-                    skills_repo.remove_skill(
-                        skills_repo.auto_skill_id(name),
-                        message=f"bulk-delete auto-skill: {name} (by {getattr(user, 'username', 'studio')})",
-                    )
-                    git_removed += 1
-                except Exception:
-                    pass  # per-skill git cleanup is best-effort
-    except Exception:
-        pass  # skills-repo unavailable — DB rows already gone
 
-    return {"deleted": deleted, "ids": deleted_ids, "git_removed": git_removed}
+    return {"deleted": deleted, "ids": deleted_ids}
 
 
 @router.delete("/{skill_id}")
@@ -273,19 +258,5 @@ def approve_skill(skill_id: str, db: Session = Depends(get_db), user=Depends(get
     # until approved. On approval, promote it to the canonical git skills repo so
     # the goku-core runtime can pick it up. Best-effort — surface git errors but
     # keep the DB approval (it can be re-pushed).
-    promoted = None
-    try:
-        from app.services import skills_repo
-        if skills_repo.is_enabled():
-            sid = skills_repo.auto_skill_id(s.name)
-            promoted = skills_repo.write_skill(
-                sid,
-                {"SKILL.md": skills_repo.build_skill_md(s)},
-                message=f"approve auto-skill: {s.name} (by {getattr(user, 'username', 'studio')})",
-            )
-    except Exception as e:  # noqa: BLE001
-        import logging
-        logging.getLogger(__name__).error("Promote auto-skill '%s' to git failed: %s", s.name, e)
-        promoted = {"ok": False, "error": str(e)[:200]}
 
-    return {"approved": True, "id": skill_id, "name": s.name, "promoted": promoted}
+    return {"approved": True, "id": skill_id, "name": s.name}

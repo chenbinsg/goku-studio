@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Alert,
   AutoComplete,
   Avatar,
   Badge,
@@ -106,9 +107,15 @@ interface BaseType {
 
 interface SkillOption {
   id: string
+  /** Readable handle. Kept so a config that still names skills by their old
+   *  directory name can be resolved to an id on save. */
+  code: string
   name: string
   description: string
-  path: string
+  category?: string | null
+  /** In the library but switched off — bindable, just not loaded right now. */
+  disabled?: boolean
+  path?: string
 }
 
 const TYPE_EMOJI: Record<string, string> = {
@@ -192,6 +199,39 @@ const AgentList: React.FC = () => {
   const [allTools, setAllTools] = useState<{ name: string; description?: string }[]>([])
   const [mcpTools, setMcpTools] = useState<{ name: string; description?: string; disabled?: boolean }[]>([])
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
+  /** Bound skills that no longer exist in the library. Kept out of the form
+   *  value (they are not valid options) and surfaced as removable chips — save
+   *  stays blocked until the list is empty. */
+  const [missingSkills, setMissingSkills] = useState<string[]>([])
+
+  /**
+   * Map an agent's stored skill references onto library ids.
+   *
+   * A reference is one of three things: already an id, still the old directory
+   * name (configs written before the migration), or gone. Resolving codes here
+   * means opening and saving an agent quietly finishes its migration; anything
+   * that cannot be resolved is reported rather than dropped, because silently
+   * discarding it is exactly how an agent loses a capability without erroring.
+   */
+  const resolveSkillRefs = (refs: string[]) => {
+    // An empty option list means the library has not loaded yet — NOT that
+    // every binding is invalid. Classifying them as missing here would empty
+    // the form and, on save, strip the agent's skills for good. Same failure as
+    // the 海报设计师 incident; the rule is that validation is best-effort and
+    // never destructive. `useEffect` below re-resolves once the list arrives.
+    if (!skillOptions.length) return { resolved: [...refs], missing: [] }
+
+    const byId = new Set(skillOptions.map(s => s.id))
+    const byCode = new Map(skillOptions.map(s => [s.code, s.id]))
+    const resolved: string[] = []
+    const missing: string[] = []
+    for (const ref of refs) {
+      if (byId.has(ref)) resolved.push(ref)
+      else if (byCode.has(ref)) resolved.push(byCode.get(ref)!)
+      else missing.push(ref)
+    }
+    return { resolved, missing }
+  }
   const [availableRoles, setAvailableRoles] = useState<any[]>([])
   const [canonicalDepts, setCanonicalDepts] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
@@ -201,9 +241,6 @@ const AgentList: React.FC = () => {
   // 查看内置文件 skill 的 SKILL.md 全文
   const [skillView, setSkillView] = useState<{ id: string; name: string; content: string } | null>(null)
   const [skillViewLoading, setSkillViewLoading] = useState(false)
-  const [skillEditing, setSkillEditing] = useState(false)
-  const [skillDraft, setSkillDraft] = useState('')
-  const [skillSaving, setSkillSaving] = useState(false)
   const [importingAgent, setImportingAgent] = useState(false)
   const [modalVisible, setModalVisible] = useState(false)
   const [detailVisible, setDetailVisible] = useState(false)
@@ -371,13 +408,11 @@ const AgentList: React.FC = () => {
   }
 
   const openSkillContent = async (skill: SkillOption) => {
-    setSkillEditing(false)
-    setSkillDraft('')
-    setSkillView({ id: skill.id, name: skill.name || skill.id, content: '' })
+    setSkillView({ id: skill.id, name: skill.name || skill.code, content: '' })
     setSkillViewLoading(true)
     try {
       const res = await agentApi.skillContent(skill.id)
-      setSkillView({ id: skill.id, name: skill.name || skill.id, content: res.content || '' })
+      setSkillView({ id: skill.id, name: skill.name || skill.code, content: res.content || '' })
     } catch (e: any) {
       message.error(e?.response?.data?.detail || '加载技能内容失败')
       setSkillView(null)
@@ -498,16 +533,33 @@ const AgentList: React.FC = () => {
   const handleCreate = () => {
     setEditingId(null)
     setSelectedBaseType(null)
+    setMissingSkills([])     // otherwise a previous edit's warning blocks this save
     form.resetFields()
     form.setFieldsValue({ department: notGroupedLabel })
     setModalVisible(true)
   }
+
+  // Re-resolve when the library arrives after the editor was already open.
+  useEffect(() => {
+    if (!modalVisible || !editingId || !skillOptions.length) return
+    const current = (form.getFieldValue('skills') || []) as string[]
+    if (!current.length) return
+    const { resolved, missing } = resolveSkillRefs(current)
+    form.setFieldsValue({ skills: resolved })
+    setMissingSkills(missing)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [skillOptions, modalVisible, editingId])
 
   const handleEdit = (agent: AgentDefinition) => {
     setEditingId(agent.id)
     fetchAllTools()  // refresh tool/MCP list each open so newly-registered tools show up
     const base = baseTypes.find(t => t.key === agent.agent_type) || null
     setSelectedBaseType(base)
+    // Resolve stored references before they reach the form: an old directory
+    // name becomes its id (so saving finishes the migration for this agent),
+    // and anything unresolvable is held aside for the operator to clear.
+    const skillRefs = resolveSkillRefs(agent.skills || [])
+    setMissingSkills(skillRefs.missing)
     form.setFieldsValue({
       name: agent.name,
       description: agent.description,
@@ -517,7 +569,7 @@ const AgentList: React.FC = () => {
       category: agent.category || undefined,
       figure_url: agent.figure_url,
       system_prompt_override: agent.system_prompt_override,
-      skills: agent.skills || [],
+      skills: skillRefs.resolved,
       allowed_tools: agent.allowed_tools,
       model_override: agent.model_override,
       max_steps: agent.max_steps,
@@ -764,6 +816,14 @@ const AgentList: React.FC = () => {
     setSubmitting(true)
     try {
       const values = await form.validateFields()
+      if (missingSkills.length) {
+        // Writing the config back while it still points at skills that do not
+        // exist would either persist a dangling reference or drop it silently.
+        // Neither is acceptable, so the operator decides.
+        message.error(t('agent_edit_skills_missing_block',
+          `有 ${missingSkills.length} 个 skill 已不存在,请先移除后再保存:${missingSkills.join('、')}`))
+        return
+      }
       if (values.department === notGroupedLabel) values.department = ''
       values.division = values.division || null
       values.display_name = values.display_name || null
@@ -1434,11 +1494,42 @@ const AgentList: React.FC = () => {
                         optionLabelProp="label"
                         options={skillOptions.map(s => ({
                           value: s.id,
-                          label: s.name || s.id,
+                          label: s.disabled ? `${s.name || s.code}（已停用）` : (s.name || s.code),
                           title: s.description,
                         }))}
                       />
                     </Form.Item>
+
+                    {missingSkills.length > 0 && (
+                      <Alert
+                        type="error"
+                        showIcon
+                        style={{ marginBottom: 16 }}
+                        message={t('agent_edit_skills_missing',
+                          `${missingSkills.length} 个绑定的 skill 已不存在`)}
+                        description={
+                          <div>
+                            <div style={{ marginBottom: 8 }}>
+                              {missingSkills.map(ref => (
+                                <Tag
+                                  key={ref}
+                                  closable
+                                  color="red"
+                                  onClose={() => setMissingSkills(prev => prev.filter(x => x !== ref))}
+                                  style={{ marginBottom: 4 }}
+                                >
+                                  {ref}
+                                </Tag>
+                              ))}
+                            </div>
+                            <Text type="secondary">
+                              {t('agent_edit_skills_missing_help',
+                                '它们在 Skill 库中已被删除。移除后才能保存 —— 留着会让配置指向一个不存在的东西,而运行时只会跳过它、不报错。')}
+                            </Text>
+                          </div>
+                        }
+                      />
+                    )}
 
                     <Form.Item shouldUpdate={(prev, cur) => prev.skills !== cur.skills} noStyle>
                       {({ getFieldValue }) => {
@@ -1473,57 +1564,30 @@ const AgentList: React.FC = () => {
                       }}
                     </Form.Item>
 
+                    {/* Read-only. A skill is edited in Skill 管理 and nowhere
+                        else, so every change goes through the same validation,
+                        impact warning and version history. This view exists so
+                        you can see what a bound skill actually tells the model
+                        while configuring the agent. */}
                     <Modal
                       open={!!skillView}
-                      title={skillView ? `技能内容 · ${skillView.name}${skillEditing ? '（编辑中）' : ''}` : '技能内容'}
+                      title={skillView ? `技能内容 · ${skillView.name}` : '技能内容'}
                       width={760}
-                      onCancel={() => { setSkillView(null); setSkillEditing(false) }}
+                      onCancel={() => setSkillView(null)}
                       destroyOnClose
                       footer={
-                        skillViewLoading ? null : (
-                          skillEditing ? [
-                            <Button key="cancel" onClick={() => { setSkillEditing(false); setSkillDraft('') }}>取消</Button>,
-                            <Button
-                              key="save"
-                              type="primary"
-                              loading={skillSaving}
-                              onClick={async () => {
-                                if (!skillView) return
-                                setSkillSaving(true)
-                                try {
-                                  await agentApi.saveSkillContent(skillView.id, skillDraft)
-                                  setSkillView({ ...skillView, content: skillDraft })
-                                  setSkillEditing(false)
-                                  message.success('已保存，下个任务即时生效')
-                                } catch (e: any) {
-                                  message.error(e?.response?.data?.detail || '保存失败')
-                                } finally {
-                                  setSkillSaving(false)
-                                }
-                              }}
-                            >保存</Button>,
-                          ] : [
-                            <Button key="close" onClick={() => setSkillView(null)}>关闭</Button>,
-                            <Button
-                              key="edit"
-                              type="primary"
-                              disabled={!skillView}
-                              onClick={() => { setSkillDraft(skillView?.content || ''); setSkillEditing(true) }}
-                            >编辑</Button>,
-                          ]
-                        )
+                        skillViewLoading ? null : [
+                          <Button key="manage" onClick={() => window.open('/skills', '_blank')}>
+                            {t('agent_edit_skill_manage', '去 Skill 管理编辑')}
+                          </Button>,
+                          <Button key="close" type="primary" onClick={() => setSkillView(null)}>
+                            {t('common_close', '关闭')}
+                          </Button>,
+                        ]
                       }
                     >
                       {skillViewLoading ? (
                         <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
-                      ) : skillEditing ? (
-                        <TextArea
-                          value={skillDraft}
-                          onChange={e => setSkillDraft(e.target.value)}
-                          autoSize={{ minRows: 20, maxRows: 32 }}
-                          spellCheck={false}
-                          style={{ fontSize: 12, lineHeight: 1.6, fontFamily: 'monospace' }}
-                        />
                       ) : (
                         <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '70vh', overflow: 'auto', fontSize: 12, lineHeight: 1.6, background: '#fafafa', padding: 12, borderRadius: 6, margin: 0 }}>
                           {skillView?.content}

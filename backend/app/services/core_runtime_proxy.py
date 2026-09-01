@@ -163,6 +163,37 @@ async def put_to_core(
     return resp.json()
 
 
+async def patch_to_core(
+    request: Request,
+    path: str,
+    json_body: dict | None = None,
+    *,
+    timeout: int | None = None,
+    purpose: str = "该修改操作",
+) -> dict:
+    """PATCH ``path`` on goku-core. Same relay semantics as :func:`post_to_core`."""
+    resp = await _relay(request, "PATCH", path, json_body=json_body, timeout=timeout, purpose=purpose)
+    return resp.json()
+
+
+async def delete_from_core(
+    request: Request,
+    path: str,
+    *,
+    timeout: int | None = None,
+    purpose: str = "该删除操作",
+) -> dict:
+    """DELETE ``path`` on goku-core and return its JSON body.
+
+    Distinct from :func:`delete_to_core`, which discards the response because
+    the endpoints it fronts answer 204. A soft delete answers 200 with a
+    receipt — which agents lost the skill — and dropping that would leave the
+    page unable to say what the deletion actually cost.
+    """
+    resp = await _relay(request, "DELETE", path, timeout=timeout, purpose=purpose)
+    return resp.json()
+
+
 async def delete_to_core(
     request: Request,
     path: str,

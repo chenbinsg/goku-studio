@@ -71,7 +71,7 @@ const Layout: React.FC = () => {
   const { hasPermission, isSuperuser: isAdmin } = usePermissions()
   const { isDark, toggle: toggleTheme } = useThemeStore()
   const {
-    token: { colorBgContainer },
+    token: { colorBgContainer, colorBorderSecondary },
   } = theme.useToken()
 
   const fetchNotifications = useCallback(async () => {
@@ -363,7 +363,12 @@ const Layout: React.FC = () => {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: isMobile ? '0 12px' : '0 24px',
-          height: isMobile ? 52 : 64,
+          // Same bar metrics as the chat shell's top bar (ChatLayout: 72px tall,
+          // hairline bottom border) so the two shells read as one product.
+          // Background stays on the theme token — ChatLayout hard-codes #fff and
+          // therefore has no dark mode; copying that here would break the toggle.
+          height: isMobile ? 52 : 72,
+          borderBottom: `1px solid ${colorBorderSecondary}`,
         }}>
           {/* Mobile: hamburger; Desktop: city clock */}
           {isMobile ? (

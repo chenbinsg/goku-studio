@@ -247,38 +247,6 @@ def list_base_types(user = Depends(get_current_user)):
     }
 
 
-def _skills_root() -> Path:
-    """Return the directory that holds skill definitions (``<id>/SKILL.md``).
-
-    Skills are owned by the goku-core runtime and live at ``goku/core/skills/``.
-    This Studio service is a sibling checkout of goku-core
-    (``…/goku/studio`` ↔ ``…/goku/core``), so by default we resolve to the
-    sibling ``core/skills``. In container deployments where goku-core's skills are
-    mounted elsewhere, set ``SKILLS_ROOT`` to point at that path.
-
-    NOTE on depth: this module lives at backend/app/routers/studio/agents.py, so
-    ``parents[4]`` is this repo's root (``…/goku/studio``) and ``parents[5]`` is
-    ``…/goku``. A previous bug used ``parents[3] / "skills"`` (→ nonexistent
-    ``backend/skills``), making _discover_skills() return [] and silently wiping
-    every agent's skills on save (see 海报设计师 incident, 2026-06-10).
-    """
-    import os
-    # Plan A: when a canonical git skills repo is configured, read from the
-    # writable clone Studio maintains (it is the sole committer). Falls through to
-    # the legacy sibling/SKILLS_ROOT path when git is disabled.
-    try:
-        from app.services import skills_repo
-        clone = skills_repo.clone_path_or_none()
-        if clone is not None:
-            return clone
-    except Exception:
-        pass
-    override = os.environ.get("SKILLS_ROOT")
-    if override:
-        return Path(override)
-    return Path(__file__).resolve().parents[5] / "core" / "skills"
-
-
 def _icons_root() -> Path:
     """Return the persistent icons directory.
 
@@ -459,52 +427,17 @@ def _write_imported_figure(agent_name: str, figure_asset: dict | None) -> str | 
     return f"/icons/{target_name}"
 
 
-def _discover_skills() -> list[dict]:
-    root = _skills_root()
-    if not root.exists():
-        return []
-    skills = []
-    for skill_md in sorted(root.glob("*/SKILL.md")):
-        skill_id = skill_md.parent.name
-        text = skill_md.read_text(encoding="utf-8", errors="ignore")
-        name = skill_id
-        description = ""
-        if text.startswith("---"):
-            parts = text.split("---", 2)
-            if len(parts) >= 3:
-                for line in parts[1].splitlines():
-                    if line.startswith("name:"):
-                        name = line.split(":", 1)[1].strip()
-                    elif line.startswith("description:"):
-                        description = line.split(":", 1)[1].strip()
-        skills.append({
-            "id": skill_id,
-            "name": name,
-            "description": description,
-            "path": str(skill_md),
-        })
-    return skills
-
-
-def _valid_skill_ids() -> set[str]:
-    return {skill["id"] for skill in _discover_skills()}
-
-
 def _filter_valid_skills(skills) -> list[str]:
-    """Filter submitted skill ids against the discoverable skill set — fail-safe.
+    """Pass the submitted ids through untouched.
 
-    If the skill directory is missing or misconfigured (empty valid set), return
-    the submitted ids UNCHANGED rather than wiping them. This Studio service does
-    not own the skill files (the goku-core runtime does), so an empty discovery
-    means "cannot validate here", not "all skills are invalid". Silently stripping
-    would destroy every agent's skill bindings on every save — exactly the
-    海报设计师 regression. Validation is best-effort; never destructive.
+    Validation moved to goku-core, which owns the Skill 库 and rejects an
+    unknown reference with a 400 naming it. Studio used to check against a
+    local copy of the skill *files*; that copy is gone, and a check against
+    something this service no longer has would either pass everything (useless)
+    or strip everything (the 海报设计师 regression, where every agent lost its
+    bindings on save).
     """
-    submitted = [s for s in (skills or []) if s]
-    valid = _valid_skill_ids()
-    if not valid:
-        return submitted
-    return [s for s in submitted if s in valid]
+    return [s for s in (skills or []) if s]
 
 
 def _filter_allowed_tools(tools, base_tools=None):
@@ -545,19 +478,13 @@ def get_email_pending_counts(
     return {"counts": {slug: count for slug, count in rows if slug}}
 
 
-# Skill files are owned and consumed by the goku-core runtime: the executor
-# loads each SKILL.md from core's own skills root at task time. Studio's local
-# checkout (``_skills_root()``) is a SEPARATE, possibly stale copy — in the
-# split deployment it is the image-baked ``/app/skills`` while core reads a
-# git-synced cache, so a Studio-local read/write shows and edits something the
-# model never sees. These three endpoints therefore proxy to core's identical
-# endpoints, exactly like the MCP live-connection routes, so the UI always views
-# and edits the bytes the model actually loads. ``_skills_root()`` /
-# ``_discover_skills()`` remain only for internal binding-list helpers.
+# Skills live in the database and goku-core owns the Skill 库, so these two
+# endpoints relay rather than answer. Studio used to keep its own checkout of
+# the skill files, which was a separate and reliably stale copy — the page
+# showed one thing and the model loaded another.
 @router.get("/skills")
 async def list_agent_skills(request: Request, user = Depends(get_current_user)):
-    """Skills available for Agent binding — proxied to core so the list (and its
-    ``root``) reflect the runtime's own skills directory, not Studio's copy."""
+    """Skills available for Agent binding — relayed from core's Skill 库."""
     from app.services import core_runtime_proxy
     return await core_runtime_proxy.get_from_core(request, "/api/v1/agents/skills")
 
@@ -572,21 +499,10 @@ async def get_agent_skill_content(skill_id: str, request: Request, user = Depend
     )
 
 
-class _SkillContentIn(BaseModel):
-    content: str
-
-
-@router.put("/skills/{skill_id}/content")
-async def update_agent_skill_content(
-    skill_id: str, body: _SkillContentIn, request: Request, user = Depends(get_current_user)
-):
-    """Overwrite a skill's SKILL.md — proxied to core so the edit lands on the
-    file the executor reads and takes effect immediately. Core owns the
-    path-traversal guard, the ``.bak`` backup, and the write."""
-    from app.services import core_runtime_proxy
-    return await core_runtime_proxy.put_to_core(
-        request, f"/api/v1/agents/skills/{skill_id}/content", {"content": body.content}
-    )
+# The write endpoint that used to sit here is gone: a skill is edited in the
+# Skill 管理 page and nowhere else, so that every change goes through the same
+# validation, impact warning and version history. See
+# docs/DESIGN-skill-management.md §18 (in goku-core).
 
 
 def _agent_access_filter(query, user, db):

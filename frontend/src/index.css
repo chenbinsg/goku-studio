@@ -18,14 +18,16 @@ body {
   min-height: 100vh;
 }
 
+/* No drop shadow on the sider: the chat shell draws its rail flat, and the
+   shadow was the visible seam between the two shells. Separation now comes
+   from the sider's own dark background. */
 .ant-layout-sider {
-  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+  box-shadow: none;
 }
 
 .ant-layout-header {
   background: #fff;
   padding: 0 24px;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
   display: flex;
   align-items: center;
   justify-content: space-between;

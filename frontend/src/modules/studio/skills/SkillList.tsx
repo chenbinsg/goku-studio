@@ -47,9 +47,17 @@ interface Skill {
   created_at: string
   updated_at: string
   source_task_id?: string
+  /** Set once this candidate has been 入库'd — the row it became in the library. */
+  promoted_skill?: { id: string; code: string; status: string } | null
 }
 
-const SkillList: React.FC = () => {
+interface SkillListProps {
+  /** Rendered inside the Skill 管理 tabs — the page already has a title and
+   *  padding, so suppress this component's own. */
+  embedded?: boolean
+}
+
+const SkillList: React.FC<SkillListProps> = ({ embedded = false }) => {
   const { t } = useTranslation()
   const [skills, setSkills] = useState<Skill[]>([])
   const [total, setTotal] = useState(0)
@@ -63,6 +71,11 @@ const SkillList: React.FC = () => {
 
   // Detail modal
   const [detailModal, setDetailModal] = useState<Skill | null>(null)
+
+  // 入库 dialog — the one crossing between the two pools
+  const [promoteOf, setPromoteOf] = useState<any | null>(null)
+  const [promoteForm] = Form.useForm()
+  const [promoting, setPromoting] = useState(false)
 
   // Edit modal
   const [editModal, setEditModal] = useState<Skill | null>(null)
@@ -89,6 +102,37 @@ const SkillList: React.FC = () => {
   useEffect(() => {
     fetchSkills()
   }, [fetchSkills])
+
+  /**
+   * Open the 入库 dialog. The candidate itself stays read-only — it is the
+   * record of what the extractor produced. The dialog only picks the handle and
+   * category; the text is polished afterwards, in the Skill 库.
+   */
+  const openPromote = async (row: any) => {
+    try {
+      const full = await autoSkillApi.get(row.id)
+      setPromoteOf(full)
+      promoteForm.setFieldsValue({ code: full.suggested_code, category: undefined })
+    } catch {
+      message.error(t('skill_promote_load_failed', '读取候选失败'))
+    }
+  }
+
+  const doPromote = async () => {
+    let values: any
+    try { values = await promoteForm.validateFields() } catch { return }
+    setPromoting(true)
+    try {
+      const res = await autoSkillApi.promote(promoteOf.id, values)
+      message.success(res.note || t('skill_promote_done', '已入库'))
+      setPromoteOf(null)
+      fetchSkills()
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || t('skill_promote_failed', '入库失败'))
+    } finally {
+      setPromoting(false)
+    }
+  }
 
   const handleApprove = async (id: string) => {
     try {
@@ -295,21 +339,18 @@ const SkillList: React.FC = () => {
               onClick={() => setDetailModal(record)}
             />
           </Tooltip>
-          <Tooltip title={t('skill_action_edit', 'Edit')}>
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => openEdit(record)}
-            />
-          </Tooltip>
-          {record.approval_status === 'pending' && (
+          {/* No edit button. A candidate is the record of what the extractor
+              produced and stays as-is; content is polished after 入库, in the
+              正式Skill library, where the change lands in a version history. */}
+          {(record.approval_status === 'pending' || record.approval_status === 'rejected')
+            && !record.promoted_skill && (
             <>
-              <Tooltip title={t('skill_action_approve', 'Approve')}>
+              <Tooltip title={t('skill_action_promote', '入库 —— 复制进正式Skill,默认停用')}>
                 <Button
                   size="small"
                   type="primary"
                   icon={<CheckCircleOutlined />}
-                  onClick={() => handleApprove(record.id)}
+                  onClick={() => openPromote(record)}
                 />
               </Tooltip>
               <Tooltip title={t('skill_action_reject', 'Reject')}>
@@ -321,6 +362,18 @@ const SkillList: React.FC = () => {
                 />
               </Tooltip>
             </>
+          )}
+          {record.promoted_skill && (
+            <Tooltip title={t('skill_action_view_promoted',
+              `已入库为 ${record.promoted_skill.code},点击查看`)}>
+              <Button
+                size="small"
+                type="link"
+                onClick={() => window.open('/skills', '_self')}
+              >
+                {t('skill_promoted_link', '已入库')}
+              </Button>
+            </Tooltip>
           )}
           <Popconfirm
             title={t('skill_delete_confirm', 'Delete this skill?')}
@@ -338,13 +391,15 @@ const SkillList: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: '24px' }}>
-      <Space style={{ marginBottom: 16 }} align="center">
-        <ThunderboltOutlined style={{ fontSize: 24, color: '#1677ff' }} />
-        <Title level={3} style={{ margin: 0 }}>
-          {t('skill_list_title', 'Auto Skills')}
-        </Title>
-      </Space>
+    <div style={{ padding: embedded ? 0 : 24 }}>
+      {!embedded && (
+        <Space style={{ marginBottom: 16 }} align="center">
+          <ThunderboltOutlined style={{ fontSize: 24, color: '#1677ff' }} />
+          <Title level={3} style={{ margin: 0 }}>
+            {t('skill_list_title', 'Auto Skills')}
+          </Title>
+        </Space>
+      )}
 
       <Card style={{ marginBottom: 16 }}>
         <Space wrap>
@@ -535,6 +590,60 @@ const SkillList: React.FC = () => {
           >
             <Input />
           </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* ── 入库 ─────────────────────────────────────────────────────────── */}
+      <Modal
+        open={!!promoteOf}
+        title={t('skill_promote_title', `入库 — ${promoteOf?.name}`)}
+        width={720}
+        confirmLoading={promoting}
+        onOk={doPromote}
+        onCancel={() => setPromoteOf(null)}
+        okText={t('skill_promote_ok', '入库')}
+        cancelText={t('confirm_no', '取消')}
+      >
+        <Form form={promoteForm} layout="vertical">
+          <Form.Item
+            name="code"
+            label={t('skill_promote_code', '标识')}
+            rules={[
+              { required: true, message: t('skill_promote_code_required', '必填') },
+              {
+                pattern: /^[a-z0-9][a-z0-9._-]*$/,
+                message: t('skill_promote_code_pattern', '小写字母、数字、点、下划线、连字符'),
+              },
+            ]}
+            extra={t('skill_promote_code_help', '系统按名称生成,可改;入库之后也随时能改')}
+          >
+            <Input />
+          </Form.Item>
+          <Form.Item name="category" label={t('skill_promote_category', '分类')}>
+            <Input allowClear />
+          </Form.Item>
+
+          <div style={{ marginBottom: 8 }}>
+            <Text type="secondary">
+              {t('skill_promote_source',
+                `来源:提炼自 ${promoteOf?.source_task_ids?.length || 0} 个任务`)}
+            </Text>
+          </div>
+
+          <div style={{ marginBottom: 8 }}>
+            <Text strong>{t('skill_promote_content', '内容(只读,入库后在正式Skill中编辑)')}</Text>
+          </div>
+          <pre style={{
+            maxHeight: '38vh', overflow: 'auto', background: 'rgba(0,0,0,.03)',
+            padding: 12, borderRadius: 6, fontSize: 12, margin: 0,
+          }}>{promoteOf?.rendered_content}</pre>
+
+          <div style={{ marginTop: 12 }}>
+            <Text type="secondary">
+              {t('skill_promote_note',
+                '入库后默认为「停用」状态。请在正式Skill中确认内容无误,再启用并绑定给需要的 agent。')}
+            </Text>
+          </div>
         </Form>
       </Modal>
     </div>

@@ -585,6 +585,18 @@ def _classify_http_status(code: int, msg: str) -> tuple[str, str]:
     return "protocol_mismatch", f"HTTP {code}: {msg}"
 
 
+def _has_informative_cause(exc: BaseException) -> bool:
+    """True when the failure carries a REAL exception rather than only
+    cancellation noise — i.e. :func:`_classify_probe_error` had something to
+    work with. Mirrors that function's own first two lines.
+
+    Gates whether the raw-HTTP fallback may overwrite the classified message:
+    a guess must never replace a cause we actually hold.
+    """
+    leaves = list(_iter_leaves(exc)) or [exc]
+    return any(not _is_cancel_noise(e) for e in leaves)
+
+
 def _classify_probe_error(exc: BaseException) -> tuple[str, str]:
     """Map an exception raised during ``probe_connection`` into an
     ``(error_type, message)`` pair.
@@ -638,11 +650,17 @@ def _classify_probe_error(exc: BaseException) -> tuple[str, str]:
 
 def _http_fallback_diagnosis_sync(
     url: str, headers: Dict[str, str], timeout: float,
-) -> Optional[tuple[str, str]]:
+) -> Optional[tuple[str, str, bool]]:
     """Synchronous raw HTTP probe — replays the MCP ``initialize`` POST and
     reads the real status line / redirect. Runs in a worker thread (see
     :func:`_http_fallback_diagnosis`) so it is immune to the corrupted
     asyncio cancel-scope state the failed SDK handshake leaves behind.
+
+    Returns ``(error_type, message, from_status)``. ``from_status`` is True
+    when the verdict comes from an actual status line (3xx redirect, 4xx, 5xx)
+    and therefore outranks whatever the caller already had. It is False for the
+    2xx branch, which can only GUESS at a cause — see
+    :func:`_merge_fallback_diagnosis`.
     """
     try:
         import httpx
@@ -669,14 +687,18 @@ def _http_fallback_diagnosis_sync(
                 f"HTTP {code} redirect → {loc}. The MCP client does not follow "
                 f"redirects; point service_url straight at the final endpoint "
                 f"(a missing trailing '/' is the usual cause)."
-            )
+            ), True
         if code >= 400:
-            return _classify_http_status(code, snippet or f"HTTP {code}")
-        # 2xx but the SDK handshake still failed — genuinely a protocol issue.
+            err_type, err_msg = _classify_http_status(code, snippet or f"HTTP {code}")
+            return err_type, err_msg, True
+        # 2xx: the endpoint answered a raw initialize just fine, so whatever
+        # broke the handshake is NOT visible from here. This is the weakest
+        # verdict we produce — flagged ``from_status=False`` so it can only
+        # stand when the classifier had nothing real of its own.
         return "protocol_mismatch", (
             f"Endpoint returned HTTP {code} but the MCP handshake failed; "
             f"it may not speak Streamable HTTP. Body: {snippet}"
-        )
+        ), False
     except Exception as e:  # fallback must never raise
         logger.debug("http fallback diagnosis failed: %s", e)
         return None
@@ -684,7 +706,7 @@ def _http_fallback_diagnosis_sync(
 
 async def _http_fallback_diagnosis(
     config: MCPServerConfig, *, timeout: float,
-) -> Optional[tuple[str, str]]:
+) -> Optional[tuple[str, str, bool]]:
     """Best-effort raw HTTP probe for ``http`` servers, used only when the
     MCP handshake failed without surfacing a real cause.
 
@@ -708,17 +730,46 @@ async def _http_fallback_diagnosis(
         return None
 
 
+def _merge_fallback_diagnosis(
+    exc: BaseException, err_type: str, err_msg: str,
+    fallback: tuple[str, str, bool],
+) -> tuple[str, str]:
+    """Combine the classified error with the raw-HTTP replay verdict.
+
+    A status-derived verdict (401, a redirect, 5xx) is concrete and wins. The
+    2xx verdict is a GUESS and may only stand when the classifier had nothing
+    real to report — otherwise we keep the real cause and append the one thing
+    the replay did establish: the endpoint itself answers fine.
+
+    Why this matters: a client-side failure (wrong SDK version, missing import,
+    broken transport) reaches here as a real exception AND a healthy 2xx
+    replay. Letting the guess win prints "it may not speak Streamable HTTP" —
+    sending the operator to audit a server that was never at fault, while the
+    exception naming the true cause is thrown away.
+    """
+    fb_type, fb_msg, from_status = fallback
+    if from_status or not _has_informative_cause(exc):
+        return fb_type, fb_msg
+    return err_type, (
+        f"{err_msg} — a raw initialize replay reached the endpoint fine, "
+        f"so the failure is on our side, not the server's."
+    )
+
+
 async def _diagnose_connect_error(
     config: MCPServerConfig, exc: BaseException, *, timeout: float,
 ) -> tuple[str, str]:
     """Classify a failed MCP connect and, for opaque HTTP failures, replay
-    a raw initialize request to recover the real upstream status.
+    a raw initialize request to recover the real upstream status. The replay
+    may only ADD information — see :func:`_merge_fallback_diagnosis`.
     """
     err_type, err_msg = _classify_probe_error(exc)
     if err_type in ("unknown", "protocol_mismatch"):
         fallback = await _http_fallback_diagnosis(config, timeout=timeout)
         if fallback is not None:
-            err_type, err_msg = fallback
+            err_type, err_msg = _merge_fallback_diagnosis(
+                exc, err_type, err_msg, fallback,
+            )
     return err_type, err_msg
 
 
@@ -734,7 +785,9 @@ def _diagnose_connect_error_sync(
             config.url, config.env or {}, timeout,
         )
         if fallback is not None:
-            err_type, err_msg = fallback
+            err_type, err_msg = _merge_fallback_diagnosis(
+                exc, err_type, err_msg, fallback,
+            )
     return err_type, err_msg
 
 

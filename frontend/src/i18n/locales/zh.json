@@ -10,7 +10,7 @@
   "layout_agent_identity_label": "全局指令",
   "layout_agent_management_label": "代理管理",
   "layout_agent_knowledge_label": "认知中枢",
-  "layout_skills_label": "自悟技能",
+  "layout_skills_label": "Skill管理",
   "layout_tools_label": "工具管理",
   "layout_models_label": "模型管理",
   "layout_model_routing_label": "智能路由",
@@ -2648,5 +2648,9 @@
   "mcp_transfer_no_cap_config": "无可导入配置",
   "mcp_transfer_cap_applied": "已导入",
   "mcp_transfer_cap_apply_failed": "导入失败",
-  "mcp_transfer_cap_unmatched": "文件带的这些能力配置未匹配到当前能力:{{names}}"
+  "mcp_transfer_cap_unmatched": "文件带的这些能力配置未匹配到当前能力:{{names}}",
+  "skills_page_title": "Skill管理",
+  "skills_page_subtitle": "正式Skill 才能被 agent 绑定和加载;自悟Skill 是系统自动提炼的候选,入库后才可用。",
+  "skills_tab_library": "正式Skill",
+  "skills_tab_auto": "自悟Skill"
 }

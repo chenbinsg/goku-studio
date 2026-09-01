@@ -10,7 +10,7 @@
   "layout_agent_identity_label": "Global Instructions",
   "layout_agent_management_label": "Agent Management",
   "layout_agent_knowledge_label": "Agent Knowledge Hub",
-  "layout_skills_label": "Auto Skills",
+  "layout_skills_label": "Skills",
   "layout_tools_label": "Tools",
   "layout_models_label": "Models",
   "layout_model_routing_label": "Smart Routing",
@@ -2648,5 +2648,9 @@
   "mcp_transfer_no_cap_config": "No config to import",
   "mcp_transfer_cap_applied": "Imported",
   "mcp_transfer_cap_apply_failed": "Import failed",
-  "mcp_transfer_cap_unmatched": "Capability config in the file with no matching capability: {{names}}"
+  "mcp_transfer_cap_unmatched": "Capability config in the file with no matching capability: {{names}}",
+  "skills_page_title": "Skills",
+  "skills_page_subtitle": "Only skills in the library can be bound to an agent and loaded. Auto skills are candidates the system distilled from past tasks — they stay unusable until promoted.",
+  "skills_tab_library": "Skill Library",
+  "skills_tab_auto": "Auto Skills"
 }

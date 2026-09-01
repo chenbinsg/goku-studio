@@ -16,7 +16,7 @@
   "layout_knowledge_label": "ナレッジベース",
   "layout_docs_label": "ドキュメントセンター",
   "layout_agent_knowledge_label": "認知ハブ",
-  "layout_skills_label": "自律スキル",
+  "layout_skills_label": "スキル管理",
   "layout_section_extend": "拡張",
   "layout_mcp_servers_label": "MCP サーバー",
   "layout_message_connectors_label": "コネクター",
@@ -2648,5 +2648,9 @@
   "mcp_transfer_no_cap_config": "インポート可能な設定なし",
   "mcp_transfer_cap_applied": "インポート済み",
   "mcp_transfer_cap_apply_failed": "インポート失敗",
-  "mcp_transfer_cap_unmatched": "現在の能力に一致しないファイル内の能力設定:{{names}}"
+  "mcp_transfer_cap_unmatched": "現在の能力に一致しないファイル内の能力設定:{{names}}",
+  "skills_page_title": "スキル管理",
+  "skills_page_subtitle": "正式スキルのみがエージェントにバインドされ読み込まれます。自律スキルはシステムが過去のタスクから抽出した候補で、登録するまで使用されません。",
+  "skills_tab_library": "正式スキル",
+  "skills_tab_auto": "自律スキル"
 }
