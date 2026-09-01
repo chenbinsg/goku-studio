@@ -201,6 +201,10 @@ const AgentList: React.FC = () => {
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
   /** The fetch failed, as opposed to the library genuinely being empty. */
   const [skillsFailed, setSkillsFailed] = useState(false)
+  /** The library answered at least once. Until it has, an empty option list
+   *  means "not loaded yet"; after it has, it means the library is empty — and
+   *  those two must not be treated the same, see resolveSkillRefs. */
+  const [skillsLoaded, setSkillsLoaded] = useState(false)
   /** Bound skills that no longer exist in the library. Kept out of the form
    *  value (they are not valid options) and surfaced as removable chips — save
    *  stays blocked until the list is empty. */
@@ -216,12 +220,19 @@ const AgentList: React.FC = () => {
    * discarding it is exactly how an agent loses a capability without erroring.
    */
   const resolveSkillRefs = (refs: string[]) => {
-    // An empty option list means the library has not loaded yet — NOT that
-    // every binding is invalid. Classifying them as missing here would empty
-    // the form and, on save, strip the agent's skills for good. Same failure as
-    // the 海报设计师 incident; the rule is that validation is best-effort and
-    // never destructive. `useEffect` below re-resolves once the list arrives.
-    if (!skillOptions.length) return { resolved: [...refs], missing: [] }
+    // Before the library has answered, an empty option list means "not loaded
+    // yet" — NOT that every binding is invalid. Classifying them as missing
+    // here would empty the form and, on save, strip the agent's skills for
+    // good. Same failure as the 海报设计师 incident; validation is best-effort
+    // and never destructive. `useEffect` below re-resolves once the list
+    // arrives.
+    //
+    // Once it HAS answered, an empty list is a fact about the library, and
+    // every binding really is dangling. Treating that as "all fine" is how an
+    // environment where the skills were never seeded looks completely healthy
+    // while no agent can load a single skill.
+    if (!skillsLoaded || skillsFailed) return { resolved: [...refs], missing: [] }
+    if (!skillOptions.length) return { resolved: [], missing: [...refs] }
 
     const byId = new Set(skillOptions.map(s => s.id))
     const byCode = new Map(skillOptions.map(s => [s.code, s.id]))
@@ -405,6 +416,7 @@ const AgentList: React.FC = () => {
       const data = await agentApi.skills()
       setSkillOptions(data.skills || [])
       setSkillsFailed(false)
+      setSkillsLoaded(true)
     } catch (e: any) {
       // Swallowing this rendered a failed request as an empty dropdown, which
       // is indistinguishable from "the library has no skills" — the operator
@@ -552,7 +564,7 @@ const AgentList: React.FC = () => {
 
   // Re-resolve when the library arrives after the editor was already open.
   useEffect(() => {
-    if (!modalVisible || !editingId || !skillOptions.length) return
+    if (!modalVisible || !editingId || !skillsLoaded) return
     const current = (form.getFieldValue('skills') || []) as string[]
     if (!current.length) return
     const { resolved, missing } = resolveSkillRefs(current)
