@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -249,9 +249,39 @@ def approve_skill(skill_id: str, db: Session = Depends(get_db), user=Depends(get
     s.updated_at      = datetime.utcnow()
     db.commit()
 
-    # Plan A (option A): an auto-extracted skill lives in the DB as a *candidate*
-    # until approved. On approval, promote it to the canonical git skills repo so
-    # the goku-core runtime can pick it up. Best-effort — surface git errors but
-    # keep the DB approval (it can be re-pushed).
-
+    # Approval marks the candidate reviewable, nothing more. Nothing loads it:
+    # reaching agents is 入库 (see promote below), which copies it into the Skill
+    # 库 as a disabled row. The git skills-repo this used to push to is gone.
     return {"approved": True, "id": skill_id, "name": s.name}
+
+
+class PromoteIn(BaseModel):
+    """入库 parameters. Content is deliberately absent — a candidate is copied
+    verbatim, and editing happens in the Skill 库 afterwards."""
+    code: Optional[str] = None
+    category: Optional[str] = None
+
+
+@router.post("/{skill_id}/promote")
+async def promote_skill(
+    skill_id: str,
+    payload: PromoteIn,
+    request: Request,
+    user=Depends(get_current_user),
+):
+    """入库 — relayed to Core, which owns the Skill 库.
+
+    Not reimplemented here: 入库 writes a Skill row through `skills_store`, and
+    a second writer against those tables is how the two halves start disagreeing
+    about what a skill is. Core also holds the code-uniqueness check and the
+    already-promoted guard.
+
+    Without this route the button on the 自悟Skill tab 404s wherever the Studio
+    host serves the API, while working locally against Core — the same split
+    that left the review routes missing.
+    """
+    from app.services import core_runtime_proxy
+    return await core_runtime_proxy.post_to_core(
+        request, f"/api/v1/auto-skills/{skill_id}/promote",
+        payload.model_dump(), purpose="自悟Skill 入库",
+    )

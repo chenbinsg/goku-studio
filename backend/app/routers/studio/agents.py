@@ -120,6 +120,34 @@ class BulkAssignRequest(BaseModel):
 
 # ── Bulk-assign endpoints ─────────────────────────────────────────────────────
 
+class GenerateDescriptionRequest(BaseModel):
+    name: str | None = None
+    agent_type: str | None = None
+    system_prompt_override: str | None = None
+    skills: list[str] | None = None
+
+
+@router.post("/generate-description")
+async def generate_agent_description(
+    data: GenerateDescriptionRequest,
+    request: Request,
+    user=Depends(get_current_user),
+):
+    """Draft an agent description — relayed to Core, which owns the wording.
+
+    The route existed only in Core, so the 生成描述 button on the agent form
+    404s wherever the Studio host serves the API while working locally against
+    Core. Proxied rather than copied: two implementations would drift into two
+    different descriptions for the same agent, and other agents read this field
+    (via list_delegatable_agents) to decide who to delegate to.
+    """
+    from app.services import core_runtime_proxy
+    return await core_runtime_proxy.post_to_core(
+        request, "/api/v1/agents/generate-description",
+        data.model_dump(), purpose="生成 Agent 描述",
+    )
+
+
 @router.post("/bulk-assign")
 def bulk_assign_agents(
     payload: BulkAssignRequest,
