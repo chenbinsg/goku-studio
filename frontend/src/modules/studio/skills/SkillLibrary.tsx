@@ -1210,10 +1210,23 @@ const SkillLibrary: React.FC = () => {
               render: (v: number) => (
                 <Space size={4}>
                   <span>v{v}</span>
+                  {/* active_version 在删除后仍留在记录上,所以不能只看它 —— 已删除的
+                      skill 没有任何版本在生效。但仍要标出删之前跑的是哪一版:一个版本
+                      可能卡在待复核,最新一行并不等于最后生效的那一行,而看已删 skill 的
+                      历史通常就是为了导出正确的那一版。 */}
                   {v === historyOf?.active_version && (
-                    <Tag color="green" style={{ marginInlineEnd: 0 }}>
-                      {t('skill_lib_rev_live', '生效中')}
-                    </Tag>
+                    historyOf?.status === 'deleted' ? (
+                      <Tooltip title={t('skill_lib_rev_was_live_tip',
+                        'Skill 已删除,当前没有任何版本在生效。这是删除前最后生效的版本。')}>
+                        <Tag style={{ marginInlineEnd: 0 }}>
+                          {t('skill_lib_rev_was_live', '曾生效')}
+                        </Tag>
+                      </Tooltip>
+                    ) : (
+                      <Tag color="green" style={{ marginInlineEnd: 0 }}>
+                        {t('skill_lib_rev_live', '生效中')}
+                      </Tag>
+                    )
                   )}
                   {/* Each version carries its own verdict — several can be
                       waiting at once, and deciding one says nothing about the
