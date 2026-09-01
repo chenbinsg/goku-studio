@@ -41,6 +41,7 @@ interface Skill {
   steps_template: any[]
   tools_used: string[]
   use_count: number
+  workflow_md?: string
   avg_success_rate: number
   avg_speedup: number | null
   approval_status: 'pending' | 'approved' | 'rejected'
@@ -542,13 +543,27 @@ const SkillList: React.FC<SkillListProps> = ({ embedded = false }) => {
               </Descriptions.Item>
             </Descriptions>
 
-            {detailModal.steps_template?.length > 0 && (
-              <Card size="small" title={t('skill_detail_steps', 'Steps Template')}>
-                <pre style={{ maxHeight: 200, overflow: 'auto', fontSize: 12, margin: 0 }}>
-                  {JSON.stringify(detailModal.steps_template, null, 2)}
-                </pre>
-              </Card>
-            )}
+            {/* The extracted skill body. Without it the only way to read what a
+                skill actually says was to open 入库 — which is backwards: you
+                cannot judge whether to promote it without seeing the content. */}
+            <Card size="small" title={t('skill_detail_content', '正文')}>
+              {detailModal.workflow_md ? (
+                <pre style={{
+                  maxHeight: 360,
+                  overflow: 'auto',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                  margin: 0,
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                }}>{detailModal.workflow_md}</pre>
+              ) : (
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  {t('skill_detail_content_empty', '这条自悟 Skill 没有正文')}
+                </Text>
+              )}
+            </Card>
           </Space>
         )}
       </Modal>
