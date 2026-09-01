@@ -1513,13 +1513,34 @@ const AgentList: React.FC = () => {
                       <Select
                         mode="multiple"
                         allowClear
+                        showSearch
                         placeholder={t('agent_edit_skills_placeholder')}
-                        optionLabelProp="label"
-                        options={skillOptions.map(s => ({
-                          value: s.id,
-                          label: s.disabled ? `${s.name || s.code}（已停用）` : (s.name || s.code),
-                          title: s.description,
-                        }))}
+                        // The option label used to be the display name only, so the
+                        // default filter could match nothing else — a skill whose 标识
+                        // you know but whose 名称 you don't was unfindable. Match both.
+                        filterOption={(input, option) => {
+                          const q = input.trim().toLowerCase()
+                          if (!q) return true
+                          const o = option as unknown as { code?: string; skillName?: string; label?: string }
+                          return [o.code, o.skillName, o.label].some(
+                            v => String(v ?? '').toLowerCase().includes(q),
+                          )
+                        }}
+                        // Dropdown row shows 标识（名称）; the selected tag shows just the
+                        // 标识, which is what an agent config actually resolves by.
+                        optionLabelProp="tagLabel"
+                        options={skillOptions.map(s => {
+                          const shown = s.name && s.name !== s.code ? `${s.code}（${s.name}）` : s.code
+                          const off = s.disabled ? '（已停用）' : ''
+                          return {
+                            value: s.id,
+                            label: `${shown}${off}`,
+                            tagLabel: `${s.code}${off}`,
+                            title: s.description,
+                            code: s.code,
+                            skillName: s.name,
+                          }
+                        })}
                         notFoundContent={
                           skillsFailed
                             ? t('agent_edit_skills_load_failed_hint',
@@ -1580,7 +1601,7 @@ const AgentList: React.FC = () => {
                               {selected.map(skill => (
                                 <div key={skill.id}>
                                   <Space size={4} align="center">
-                                    <Tag color="blue" style={{ marginBottom: 4 }}>{skill.name || skill.id}</Tag>
+                                    <Tag color="blue" style={{ marginBottom: 4 }}>{skill.name || skill.code}</Tag>
                                     <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => openSkillContent(skill)}>查看</Button>
                                   </Space>
                                   <div style={{ fontSize: 12, color: '#666', lineHeight: 1.5 }}>{skill.description}</div>

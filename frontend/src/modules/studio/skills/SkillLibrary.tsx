@@ -1133,7 +1133,6 @@ const SkillLibrary: React.FC = () => {
                   message: t('skill_lib_code_pattern', '小写字母、数字、点、下划线、连字符,首字符是字母或数字'),
                 },
               ]}
-              extra={t('skill_lib_code_help', '给人看的名字,随时可改 —— agent 绑定的是内部 id,不受影响')}
               style={{ width: 300 }}
             >
               <Input placeholder="elasticsearch-ops" />
