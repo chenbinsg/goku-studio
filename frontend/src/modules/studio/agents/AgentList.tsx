@@ -199,6 +199,8 @@ const AgentList: React.FC = () => {
   const [allTools, setAllTools] = useState<{ name: string; description?: string }[]>([])
   const [mcpTools, setMcpTools] = useState<{ name: string; description?: string; disabled?: boolean }[]>([])
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
+  /** The fetch failed, as opposed to the library genuinely being empty. */
+  const [skillsFailed, setSkillsFailed] = useState(false)
   /** Bound skills that no longer exist in the library. Kept out of the form
    *  value (they are not valid options) and surfaced as removable chips — save
    *  stays blocked until the list is empty. */
@@ -402,8 +404,17 @@ const AgentList: React.FC = () => {
     try {
       const data = await agentApi.skills()
       setSkillOptions(data.skills || [])
-    } catch {
-      // ignore
+      setSkillsFailed(false)
+    } catch (e: any) {
+      // Swallowing this rendered a failed request as an empty dropdown, which
+      // is indistinguishable from "the library has no skills" — the operator
+      // sees nothing to pick and no reason why, and an agent can end up saved
+      // with its bindings dropped. Say so instead.
+      setSkillsFailed(true)
+      message.error(
+        e?.response?.data?.detail
+        || t('agent_edit_skills_load_failed', '技能列表加载失败,下拉为空并不代表库里没有技能'),
+      )
     }
   }
 
@@ -1497,6 +1508,12 @@ const AgentList: React.FC = () => {
                           label: s.disabled ? `${s.name || s.code}（已停用）` : (s.name || s.code),
                           title: s.description,
                         }))}
+                        notFoundContent={
+                          skillsFailed
+                            ? t('agent_edit_skills_load_failed_hint',
+                                '技能列表没能加载出来 —— 不是库里没有技能。刷新重试,仍失败请检查后端。')
+                            : t('agent_edit_skills_empty', '技能库里还没有技能')
+                        }
                       />
                     </Form.Item>
 

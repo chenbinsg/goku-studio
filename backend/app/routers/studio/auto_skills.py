@@ -211,16 +211,11 @@ def bulk_delete_skills(payload: AutoSkillBulkDelete, db: Session = Depends(get_d
 
     rows = q.all()
     deleted_ids = [s.id for s in rows]
-    approved_names = [
-        s.name for s in rows
-        if getattr(s, "approval_status", None) == "approved" or s.is_approved
-    ]
     deleted = len(rows)
 
     for s in rows:
         db.delete(s)
     db.commit()
-
 
     return {"deleted": deleted, "ids": deleted_ids}
 
