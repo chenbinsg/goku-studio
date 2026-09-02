@@ -231,7 +231,10 @@ const Layout: React.FC = () => {
 
     // ── 扩展（配置类，需 system.config 权限）──
     ...(hasPermission('mcp.manage')        ? [{ key: '/mcp',        icon: <ApiOutlined />,     label: t('layout_mcp_servers_label') }]           : []),
-    ...(hasPermission('connectors.manage') ? [{ key: '/connectors', icon: <MessageOutlined />, label: t('layout_message_channels_label', '消息渠道') }]     : []),
+    // 「消息渠道」已从导航移除：这个页面是只读状态视图，所有按钮都只是
+    // goToRuntime('/system/connectors') 跳回 Runtime 的「系统管理 → 渠道接入配置」——
+    // 同一件事在左栏出现两次，用户点进来还得再跳一次。配置入口只保留 Runtime 一处。
+    // 路由本身保留，既有的深链和跳转不受影响。
     { type: 'divider' as const },
 
     // ── 文档中心 ──
