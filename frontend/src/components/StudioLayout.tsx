@@ -152,12 +152,10 @@ export default function StudioLayout() {
       label: t('layout_plugins_label'),
       onClick: () => navigate('/plugins'),
     },
-    hasPermission('connectors.manage') && {
-      key: '/connectors',
-      icon: <MessageOutlined />,
-      label: t('layout_message_channels_label'),
-      onClick: () => navigate('/connectors'),
-    },
+    // 「消息渠道」已从导航移除：这个页面是只读状态视图，按钮全是
+    // goToRuntime('/system/connectors')，点进来还得再跳一次才能改配置。
+    // 配置入口只保留 Runtime 的「系统管理 → 渠道接入配置」一处。
+    // 路由保留，既有深链和 goToRuntime 跳转不受影响。
     {
       key: '/docs',
       icon: <FileTextOutlined />,
