@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile
 from pydantic import BaseModel
 
 from app.auth import get_current_user
@@ -111,6 +111,40 @@ async def export_skills(payload: ExportIn, request: Request, user=Depends(get_cu
     )
 
 
+@router.post("/export.md")
+async def export_skill_files(payload: ExportIn, request: Request,
+                             user=Depends(get_current_user)):
+    """The file form of the export — one .md, or a zip when several are picked.
+
+    Relayed as raw bytes rather than through post_to_core: that helper parses
+    core's answer as JSON, and this answer is a file. Core's own headers are
+    passed through so the browser gets the filename core chose, rather than this
+    layer inventing a second naming rule.
+    """
+    resp = await proxy._relay(request, "POST", "/api/v1/skills/export.md",
+                              json_body=payload.model_dump(), purpose=_PURPOSE)
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("content-type", "application/octet-stream"),
+        headers={"Content-Disposition": resp.headers.get("content-disposition", "")},
+    )
+
+
+@router.post("/import/parse")
+async def parse_import_files(request: Request, files: list[UploadFile] = File(...),
+                             user=Depends(get_current_user)):
+    """Turn chosen .md files into import entries — parsed by core.
+
+    Not reimplemented here: reading the metadata block is the rule the seed and
+    the executor use, and a second copy of it would drift from theirs.
+    """
+    payload = [("files", (f.filename, await f.read(), f.content_type or "text/markdown"))
+               for f in files]
+    resp = await proxy._relay(request, "POST", "/api/v1/skills/import/parse",
+                              files=payload, purpose=_PURPOSE)
+    return resp.json()
+
+
 @router.post("/import")
 async def import_skills(payload: ImportIn, request: Request, user=Depends(get_current_user)):
     return await proxy.post_to_core(
@@ -187,6 +221,20 @@ async def rollback(
     return await proxy.post_to_core(
         request, f"/api/v1/skills/{skill_id}/revisions/{version}/rollback",
         None, purpose=_PURPOSE,
+    )
+
+
+@router.get("/{skill_id}/revisions/{version}/export.md")
+async def export_revision_file(skill_id: str, version: int, request: Request,
+                               user=Depends(get_current_user)):
+    """One historical version as a SKILL.md file — raw bytes, see export.md."""
+    resp = await proxy._relay(
+        request, "GET", f"/api/v1/skills/{skill_id}/revisions/{version}/export.md",
+        purpose=_PURPOSE)
+    return Response(
+        content=resp.content,
+        media_type=resp.headers.get("content-type", "text/markdown; charset=utf-8"),
+        headers={"Content-Disposition": resp.headers.get("content-disposition", "")},
     )
 
 

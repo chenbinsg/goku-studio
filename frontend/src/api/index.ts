@@ -860,6 +860,12 @@ export interface Skill {
    *  submitted, approved or not. Edit from the head, display the live one. */
   head_version?: number
   head_content?: string
+  /** [{step, required_tool, args?}] — the executor turns this into a hard
+   *  "call this tool at this step" constraint. */
+  tool_sequence?: any[] | null
+  /** Detail responses only: the exact text the executor injects, body plus the
+   *  composed frontmatter. */
+  model_view?: string
   /** Findings on the write that just happened (advisory ones). */
   warnings?: SkillFinding[]
   updated_at: string
@@ -948,6 +954,23 @@ export const skillApi = {
   /** Take back your own pending draft — author only. */
   withdrawReview: (id: string, version: number) =>
     api.post<Skill>(`/skills/${id}/review/${version}/withdraw`),
+  /** The file form: a zip of `<code>/SKILL.md`, the same layout the repo's
+   *  `skills/` directory has and the deploy seed reads. Frontmatter is composed
+   *  back into each file, so the archive unzips straight into a checkout. */
+  exportFiles: (body: { ids?: string[]; all?: boolean }) =>
+    api.post<Blob>('/skills/export.md', body, { responseType: 'blob' } as any),
+  /** The other half of that export: turn the zip back into import entries.
+   *  Parsing only — the preview and the write that follow are the same path a
+   *  JSON file takes. */
+  parseImportFiles: (files: File[]) => {
+    const form = new FormData()
+    files.forEach(f => form.append('files', f))
+    return api.post<{ skills: any[]; skipped: string[] }>('/skills/import/parse', form)
+  },
+  /** One historical version as a SKILL.md file, frontmatter composed back. */
+  exportRevisionFile: (id: string, version: number) =>
+    api.get<Blob>(`/skills/${id}/revisions/${version}/export.md`,
+      { responseType: 'blob' } as any),
   exportRevision: (id: string, version: number) =>
     api.get<any>(`/skills/${id}/revisions/${version}/export`),
   export: (body: { ids?: string[]; all?: boolean; include_deleted?: boolean }) =>

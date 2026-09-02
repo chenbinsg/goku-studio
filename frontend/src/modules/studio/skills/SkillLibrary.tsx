@@ -6,6 +6,7 @@ import {
   Collapse,
   Divider,
   Drawer,
+  Dropdown,
   Empty,
   Form,
   Input,
@@ -26,10 +27,12 @@ import {
   CheckSquareOutlined,
   CopyOutlined,
   DeleteOutlined,
+  DownOutlined,
   DownloadOutlined,
   EditOutlined,
   HistoryOutlined,
   PlusOutlined,
+  QuestionCircleOutlined,
   ReloadOutlined,
   InboxOutlined,
   SearchOutlined,
@@ -216,7 +219,7 @@ const SkillLibrary: React.FC = () => {
     setEditing({} as Skill)
     setUsage(null)
     form.setFieldsValue({
-      code: '', name: '', summary: '', description: '', category: undefined,
+      code: '', name: '', summary: '', category: undefined, tool_sequence_text: '',
       content: TEMPLATE, auto_injectable: false,
     })
   }
@@ -232,8 +235,9 @@ const SkillLibrary: React.FC = () => {
       setUsage(full.usage || null)
       form.setFieldsValue({
         code: full.code, name: full.name, summary: full.summary,
-        description: full.description,
         category: full.category, auto_injectable: full.auto_injectable,
+        tool_sequence_text: full.tool_sequence?.length
+          ? JSON.stringify(full.tool_sequence, null, 2) : '',
         // The last text submitted, not the live one: with a draft queued, an
         // author who opens the editor is coming back to what they wrote. They
         // are the same string whenever nothing is waiting.
@@ -253,6 +257,13 @@ const SkillLibrary: React.FC = () => {
     } catch {
       return
     }
+    // The field holds JSON text; the API takes the parsed array. Validated by
+    // the Form rule above, so a parse failure here cannot reach the server.
+    const seqText = String(values.tool_sequence_text || '').trim()
+    const seq = seqText ? JSON.parse(seqText) : null
+    delete values.tool_sequence_text
+    values.tool_sequence = seq
+
     setSaving(true)
     try {
       if (isNew) {
@@ -262,7 +273,7 @@ const SkillLibrary: React.FC = () => {
         // Only send what changed: core appends a revision whenever `content`
         // is present, so resending an untouched body would inflate the history.
         const patch: any = {}
-        for (const k of ['code', 'name', 'summary', 'description', 'category', 'auto_injectable']) {
+        for (const k of ['code', 'name', 'summary', 'category', 'auto_injectable']) {
           if (values[k] !== (editing as any)[k]) patch[k] = values[k]
         }
         // Compare the body against what the editor was opened on — comparing it
@@ -270,6 +281,10 @@ const SkillLibrary: React.FC = () => {
         // fresh edit every time.
         const base = editing?.head_content ?? editing?.content
         if (values.content !== base) patch.content = values.content
+        // Compared as JSON: the field is free text, so whitespace differences
+        // would otherwise read as a change on every save.
+        const beforeSeq = JSON.stringify(editing?.tool_sequence ?? null)
+        if (JSON.stringify(seq) !== beforeSeq) patch.tool_sequence = seq
         if (Object.keys(patch).length === 0) {
           message.info(t('skill_lib_no_change', '没有改动'))
           setSaving(false)
@@ -541,6 +556,15 @@ const SkillLibrary: React.FC = () => {
     URL.revokeObjectURL(url)
   }
 
+  const saveBlob = (blob: Blob, filename: string) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const selectedRows = (): Skill[] =>
     selectedKeys.map(k => selectedMap[String(k)]).filter(Boolean)
 
@@ -655,17 +679,29 @@ const SkillLibrary: React.FC = () => {
     })
   }
 
-  /** Export exactly what is ticked. Use the header checkbox to take everything. */
-  const exportSelected = async () => {
+  /** Export exactly what is ticked. Use the header checkbox to take everything.
+   *
+   *  Two formats, one entry point. JSON is the one that imports back through
+   *  this page; the zip is the file form — `<code>/SKILL.md`, the same layout
+   *  the repo's `skills/` has — for putting skills back into a checkout. */
+  const exportSelected = async (format: 'json' | 'md' = 'json') => {
     const ids = selectedKeys.map(String)
     if (!ids.length) return
+    const stamp = new Date().toISOString().slice(0, 10)
     try {
-      const payload = await skillApi.export({ ids })
-      const stamp = new Date().toISOString().slice(0, 10)
-      download(payload, `skills-${ids.length}-${stamp}.json`)
+      if (format === 'md') {
+        const blob = await skillApi.exportFiles({ ids })
+        // One skill comes back as the file itself; several come back zipped,
+        // because a browser cannot be handed more than one at a time.
+        const one = ids.length === 1 ? selectedRows()[0] : null
+        saveBlob(blob as any,
+          one ? `${one.code}.md` : `skills-${ids.length}-${stamp}.zip`)
+      } else {
+        download(await skillApi.export({ ids }), `skills-${ids.length}-${stamp}.json`)
+      }
       exitSelectMode()
-    } catch {
-      message.error(t('skill_lib_export_failed', '导出失败'))
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || t('skill_lib_export_failed', '导出失败'))
     }
   }
 
@@ -712,7 +748,27 @@ const SkillLibrary: React.FC = () => {
    */
   const acceptFiles = async (batch: File[]) => {
     const accepted: { name: string; skills: any[] }[] = []
+    // .md files are read server-side: their metadata block is YAML, and the
+    // rule for reading it has to be the one the seed and the executor use.
+    // Everything after this point is identical for both formats.
+    const mdFiles = batch.filter(f => /\.(md|markdown)$/i.test(f.name))
+    if (mdFiles.length) {
+      try {
+        const res = await skillApi.parseImportFiles(mdFiles)
+        if (res.skipped?.length) {
+          message.warning(t('skill_lib_import_md_skipped',
+            `${res.skipped.length} 个文件的文件名不能作为标识,已跳过:${res.skipped.join('、')}`))
+        }
+        res.skills.forEach((sk: any) => {
+          accepted.push({ name: `${sk.code}.md`, skills: [sk] })
+        })
+      } catch (e: any) {
+        message.error(e?.response?.data?.detail
+          || t('skill_lib_import_bad_md', 'md 文件解析失败'))
+      }
+    }
     for (const file of batch) {
+      if (/\.(md|markdown)$/i.test(file.name)) continue
       let parsed: any
       try {
         parsed = JSON.parse(await file.text())
@@ -830,7 +886,7 @@ const SkillLibrary: React.FC = () => {
     {
       title: (
         <Tooltip title={t('skill_lib_col_auto_tip',
-          '打开后,该 skill 会被注入到所有接受自动注入的 agent —— 不需要绑定。默认关闭。')}>
+          '打开后,不经绑定即可注入所有接受自动注入的 agent')}>
           {t('skill_lib_col_auto', '自动注入')}
         </Tooltip>
       ),
@@ -957,15 +1013,33 @@ const SkillLibrary: React.FC = () => {
           </Button>
           {selectMode ? (
             <>
-              <Button
+              {/* One export entry, two formats. A second button elsewhere for
+                  the file form would leave the page with two things called
+                  "export" that produce different artifacts. */}
+              <Dropdown.Button
                 type="primary"
-                icon={<DownloadOutlined />}
+                icon={<DownOutlined />}
                 disabled={selectedKeys.length === 0}
-                onClick={exportSelected}
+                onClick={() => exportSelected('json')}
+                menu={{
+                  items: [
+                    {
+                      key: 'json',
+                      label: t('skill_lib_export_json', 'JSON —— 可从本页导回'),
+                      onClick: () => exportSelected('json'),
+                    },
+                    {
+                      key: 'md',
+                      label: t('skill_lib_export_md', 'SKILL.md —— 按目录打包成 zip'),
+                      onClick: () => exportSelected('md'),
+                    },
+                  ],
+                }}
               >
+                <DownloadOutlined />
                 {t('skill_lib_export_selected', '导出所选')}
                 {selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ''}
-              </Button>
+              </Dropdown.Button>
               {/* All four stay put and go disabled together. Showing or hiding
                   them as the selection changes made the toolbar jump on every
                   tick — a stable row of buttons that greys out reads far
@@ -1156,30 +1230,73 @@ const SkillLibrary: React.FC = () => {
             </Form.Item>
           </Space>
 
-          <Form.Item
-            name="summary"
-            label={t('skill_lib_field_summary', '一句话说明')}
-            extra={t('skill_lib_summary_help', '给人看的 —— 列表和 agent 的技能下拉显示的就是这句。')}
-          >
+          {/* One description, and it is `summary` — the line the list and the
+              agent skill picker show. The model-facing text lives in the body's
+              frontmatter below, so a second box here only asked the operator to
+              write the same thing twice and keep the two in step. */}
+          <Form.Item name="summary" label={t('skill_lib_field_desc', '描述')}>
             <Input maxLength={255} showCount />
           </Form.Item>
 
           <Form.Item
-            name="description"
-            label={t('skill_lib_field_desc', '描述')}
-            extra={t('skill_lib_desc_help', '给模型看的 —— 它据此判断该不该加载这个技能，写长、把触发词写全都没关系。')}
-          >
-            <TextArea autoSize={{ minRows: 2, maxRows: 6 }} />
-          </Form.Item>
-
-          <Form.Item
             name="auto_injectable"
-            label={t('skill_lib_field_auto', '允许自动注入')}
+            label={
+              <Space size={4}>
+                {t('skill_lib_field_auto', '允许自动注入')}
+                <Tooltip title={t('skill_lib_auto_help',
+                  '打开后,不经绑定即可注入所有接受自动注入的 agent')}>
+                  <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                </Tooltip>
+              </Space>
+            }
             valuePropName="checked"
-            extra={t('skill_lib_auto_help',
-              '打开后,这条 skill 会注入到所有接受自动注入的 agent,不需要绑定。默认关闭 —— agent 拿到没被授予的指令,会让人无法判断某个行为到底来自哪里。')}
           >
             <Switch />
+          </Form.Item>
+
+          {/* The one frontmatter key the executor acts on, so it gets a field.
+              JSON rather than a step builder: five skills use it, the shape is
+              small, and a bespoke editor would be more code than the thing it
+              edits. Validated on save — a malformed constraint would otherwise
+              be discovered only when an agent silently stopped honouring it. */}
+          <Form.Item
+            name="tool_sequence_text"
+            label={
+              <Space size={4}>
+                {t('skill_lib_field_seq', '工具顺序约束')}
+                <Tooltip title={t('skill_lib_seq_help',
+                  '规定第几步必须调用哪个工具,留空表示不限制')}>
+                  <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                </Tooltip>
+              </Space>
+            }
+            rules={[{
+              validator: (_, v) => {
+                if (!v || !String(v).trim()) return Promise.resolve()
+                try {
+                  const parsed = JSON.parse(String(v))
+                  if (!Array.isArray(parsed)) {
+                    return Promise.reject(new Error(t('skill_lib_seq_not_array',
+                      '要是一个数组,例如 [{"step": 1, "required_tool": "get_location"}]')))
+                  }
+                  for (const item of parsed) {
+                    if (!item || typeof item !== 'object' || !item.required_tool) {
+                      return Promise.reject(new Error(t('skill_lib_seq_shape',
+                        '每一项都要有 step 和 required_tool')))
+                    }
+                  }
+                  return Promise.resolve()
+                } catch {
+                  return Promise.reject(new Error(t('skill_lib_seq_bad_json', 'JSON 格式不对')))
+                }
+              },
+            }]}
+          >
+            <TextArea
+              autoSize={{ minRows: 2, maxRows: 10 }}
+              placeholder={'[{"step": 1, "required_tool": "get_location"}]'}
+              style={{ fontFamily: 'monospace', fontSize: 12 }}
+            />
           </Form.Item>
 
           <Form.Item
@@ -1300,10 +1417,35 @@ const SkillLibrary: React.FC = () => {
                       {t('skill_lib_rev_rollback', '回滚')}
                     </Button>
                   )}
-                  <Button size="small" type="link" onClick={async () => {
-                    const payload = await skillApi.exportRevision(historyOf!.id, r.version)
-                    download(payload, `${historyOf!.code}-v${r.version}.json`)
-                  }}>{t('skill_lib_rev_export', '导出')}</Button>
+                  {/* Same two formats as the list export. One "导出" that
+                      means JSON here and something else there would be the
+                      page contradicting itself. */}
+                  <Dropdown
+                    menu={{
+                      items: [
+                        {
+                          key: 'json',
+                          label: t('skill_lib_export_json_short', 'JSON'),
+                          onClick: async () => {
+                            const payload = await skillApi.exportRevision(historyOf!.id, r.version)
+                            download(payload, `${historyOf!.code}-v${r.version}.json`)
+                          },
+                        },
+                        {
+                          key: 'md',
+                          label: t('skill_lib_export_md_short', 'SKILL.md'),
+                          onClick: async () => {
+                            const blob = await skillApi.exportRevisionFile(historyOf!.id, r.version)
+                            saveBlob(blob as any, `${historyOf!.code}-v${r.version}.md`)
+                          },
+                        },
+                      ],
+                    }}
+                  >
+                    <Button size="small" type="link">
+                      {t('skill_lib_rev_export', '导出')} <DownOutlined />
+                    </Button>
+                  </Dropdown>
                 </Space>
               ),
             },
@@ -1511,11 +1653,11 @@ const SkillLibrary: React.FC = () => {
       >
         <Paragraph type="secondary">
           {t('skill_lib_import_help',
-            '选择一个导出得到的 .json 文件。按标识匹配:已存在的更新内容并生成新版本(内部 id 不变,绑定不受影响),不存在的新建。')}
+            '选择导出得到的 .json 或 .md(可多选)。按标识匹配:已存在的更新内容并生成新版本(内部 id 不变,绑定不受影响),不存在的新建。')}
         </Paragraph>
 
         <Upload.Dragger
-          accept="application/json,.json"
+          accept="application/json,.json,text/markdown,.md"
           multiple
           showUploadList={false}
           // Nothing is uploaded: the files are parsed in the browser and only
@@ -1531,7 +1673,7 @@ const SkillLibrary: React.FC = () => {
         >
           <p style={{ margin: 0 }}><InboxOutlined style={{ fontSize: 28, color: '#1677ff' }} /></p>
           <p style={{ margin: '8px 0 0' }}>
-            {t('skill_lib_import_drop', '点击选择,或把 .json 文件拖到这里(可多选)')}
+            {t('skill_lib_import_drop', '点击选择,或把 .json / .md 文件拖到这里(可多选)')}
           </p>
         </Upload.Dragger>
 
