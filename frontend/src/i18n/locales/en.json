@@ -2846,5 +2846,8 @@
   "agent_edit_skills_missing_help": "They were deleted from the Skill library. Saving is blocked until they are removed — a binding that points at nothing is skipped at run time without an error.",
   "agent_edit_skill_manage": "Edit in Skill management",
   "agent_edit_skills_missing_block": "{{count}} skills no longer exist — remove them before saving: {{items}}",
-  "agent_edit_skills_missing": "{{count}} bound skills no longer exist"
+  "agent_edit_skills_missing": "{{count}} bound skills no longer exist",
+  "table_card_collapse": "Show less",
+  "table_card_expand": "Show all",
+  "table_card_index": "#"
 }

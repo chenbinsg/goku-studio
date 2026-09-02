@@ -156,6 +156,14 @@ export interface FormField {
 
 // ── New content-generation card types ────────────────────────────────────────
 
+export interface TextCardData {
+  title: string
+  subtitle?: string
+  /** Shown verbatim, monospace, folded past `max_height`. */
+  body: string
+  max_height?: number
+}
+
 export interface ArticleCardData {
   topic: string
   article_type: string

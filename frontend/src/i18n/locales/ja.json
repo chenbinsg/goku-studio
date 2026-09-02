@@ -2846,5 +2846,8 @@
   "agent_edit_skills_missing_help": "Skill ライブラリから削除されています。取り除くまで保存できません。存在しない参照は実行時にエラーなく無視されます。",
   "agent_edit_skill_manage": "Skill 管理で編集",
   "agent_edit_skills_missing_block": "スキル {{count}} 件が存在しません。保存前に削除してください: {{items}}",
-  "agent_edit_skills_missing": "バインド済みスキル {{count}} 件が存在しません"
+  "agent_edit_skills_missing": "バインド済みスキル {{count}} 件が存在しません",
+  "table_card_collapse": "折りたたむ",
+  "table_card_expand": "すべて表示",
+  "table_card_index": "#"
 }

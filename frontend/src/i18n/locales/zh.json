@@ -2846,5 +2846,8 @@
   "agent_edit_skills_missing_help": "它们在 Skill 库中已被删除。移除后才能保存 —— 留着会让配置指向一个不存在的东西,而运行时只会跳过它、不报错。",
   "agent_edit_skill_manage": "去 Skill 管理编辑",
   "agent_edit_skills_missing_block": "有 {{count}} 个 skill 已不存在,请先移除后再保存:{{items}}",
-  "agent_edit_skills_missing": "{{count}} 个绑定的 skill 已不存在"
+  "agent_edit_skills_missing": "{{count}} 个绑定的 skill 已不存在",
+  "table_card_collapse": "收起",
+  "table_card_expand": "显示全部",
+  "table_card_index": "#"
 }

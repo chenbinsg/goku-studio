@@ -6,6 +6,7 @@ import ToolExecutionCard from './ToolExecutionCard'
 import ApprovalCard from './ApprovalCard'
 import CodeCard from './CodeCard'
 import TableCard from './TableCard'
+import TextCard from './TextCard'
 import FormCard from './FormCard'
 import ArticleCard from './ArticleCard'
 import ImageGalleryCard from './ImageGalleryCard'
@@ -25,6 +26,7 @@ const CARD_COMPONENTS: Record<string, React.FC<CardRendererProps>> = {
   approval: ApprovalCard,
   code: CodeCard,
   table: TableCard,
+  text: TextCard,
   form: FormCard,
   article: ArticleCard,
   image_gallery: ImageGalleryCard,
