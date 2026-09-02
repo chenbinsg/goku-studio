@@ -219,7 +219,8 @@ const SkillLibrary: React.FC = () => {
     setEditing({} as Skill)
     setUsage(null)
     form.setFieldsValue({
-      code: '', name: '', summary: '', category: undefined, tool_sequence_text: '',
+      code: '', name: '', summary: '', description: '', category: undefined,
+      tags_text: '', tool_sequence_text: '',
       content: TEMPLATE, auto_injectable: false,
     })
   }
@@ -235,7 +236,9 @@ const SkillLibrary: React.FC = () => {
       setUsage(full.usage || null)
       form.setFieldsValue({
         code: full.code, name: full.name, summary: full.summary,
+        description: full.description,
         category: full.category, auto_injectable: full.auto_injectable,
+        tags_text: (full.tags || []).join(', '),
         tool_sequence_text: full.tool_sequence?.length
           ? JSON.stringify(full.tool_sequence, null, 2) : '',
         // The last text submitted, not the live one: with a draft queued, an
@@ -259,6 +262,12 @@ const SkillLibrary: React.FC = () => {
     }
     // The field holds JSON text; the API takes the parsed array. Validated by
     // the Form rule above, so a parse failure here cannot reach the server.
+    const tagsText = String(values.tags_text || '').trim()
+    delete values.tags_text
+    values.tags = tagsText
+      ? tagsText.split(/[,，]/).map(x => x.trim()).filter(Boolean)
+      : []
+
     const seqText = String(values.tool_sequence_text || '').trim()
     const seq = seqText ? JSON.parse(seqText) : null
     delete values.tool_sequence_text
@@ -273,7 +282,7 @@ const SkillLibrary: React.FC = () => {
         // Only send what changed: core appends a revision whenever `content`
         // is present, so resending an untouched body would inflate the history.
         const patch: any = {}
-        for (const k of ['code', 'name', 'summary', 'category', 'auto_injectable']) {
+        for (const k of ['code', 'name', 'summary', 'description', 'category', 'auto_injectable']) {
           if (values[k] !== (editing as any)[k]) patch[k] = values[k]
         }
         // Compare the body against what the editor was opened on — comparing it
@@ -285,6 +294,8 @@ const SkillLibrary: React.FC = () => {
         // would otherwise read as a change on every save.
         const beforeSeq = JSON.stringify(editing?.tool_sequence ?? null)
         if (JSON.stringify(seq) !== beforeSeq) patch.tool_sequence = seq
+        if (JSON.stringify(values.tags) !== JSON.stringify(editing?.tags ?? []))
+          patch.tags = values.tags
         if (Object.keys(patch).length === 0) {
           message.info(t('skill_lib_no_change', '没有改动'))
           setSaving(false)
@@ -334,7 +345,7 @@ const SkillLibrary: React.FC = () => {
 
     const names = (u?.agents || []).filter(a => a.is_active).map(a => a.name)
     Modal.confirm({
-      title: t('skill_lib_delete_title', `删除「${row.name}」?`),
+      title: t('skill_lib_delete_title', { defaultValue: '删除「{{name}}」?', name: row.name }),
       width: 520,
       content: (
         <div>
@@ -343,7 +354,7 @@ const SkillLibrary: React.FC = () => {
               type="warning"
               showIcon
               style={{ marginBottom: 12 }}
-              message={t('skill_lib_delete_impact', `${names.length} 个 agent 正在使用它`)}
+              message={t('skill_lib_delete_impact', { defaultValue: '{{count}} 个 agent 正在使用它', count: names.length })}
               description={
                 <>
                   <div>{names.join(' · ')}</div>
@@ -371,7 +382,7 @@ const SkillLibrary: React.FC = () => {
         try {
           const res = await skillApi.delete(row.id)
           message.success(res.unbound.length
-            ? t('skill_lib_deleted_unbound', `已删除,并解除了 ${res.unbound.length} 个绑定`)
+            ? t('skill_lib_deleted_unbound', { defaultValue: '已删除,并解除了 {{count}} 个绑定', count: res.unbound.length })
             : t('skill_lib_deleted', '已删除'))
           fetch()
         } catch (e: any) {
@@ -431,7 +442,7 @@ const SkillLibrary: React.FC = () => {
   const approveReview = async (row: Skill, version: number) => {
     try {
       await skillApi.approveReview(row.id, version)
-      message.success(t('skill_lib_review_approved', `v${version} 已通过复核,开始生效`))
+      message.success(t('skill_lib_review_approved', { defaultValue: 'v{{version}} 已通过复核,开始生效', version: version }))
       setEditing(null)
       setReviewOf(null)
       fetch()
@@ -443,12 +454,11 @@ const SkillLibrary: React.FC = () => {
   const rejectReview = (row: Skill, version: number) => {
     let reason = ''
     Modal.confirm({
-      title: t('skill_lib_reject_title', `驳回「${row.name}」的 v${version}?`),
+      title: t('skill_lib_reject_title', { defaultValue: '驳回「{{name}}」的 v{{version}}?', name: row.name, version: version }),
       content: (
         <div>
           <Paragraph type="secondary">
-            {t('skill_lib_reject_note',
-              `这一版从未生效过,驳回只是让它不再能生效 —— agent 继续用 v${row.active_version},正文留在版本历史里。`)}
+            {t('skill_lib_reject_note', { defaultValue: '这一版从未生效过,驳回只是让它不再能生效 —— agent 继续用 v{{active}},正文留在版本历史里。', active: row.active_version })}
           </Paragraph>
           <Input.TextArea
             rows={3}
@@ -480,9 +490,8 @@ const SkillLibrary: React.FC = () => {
   // has to ask a colleague to formally reject it.
   const withdrawReview = (row: Skill, version: number) => {
     Modal.confirm({
-      title: t('skill_lib_withdraw_title', `撤回自己提交的 v${version}?`),
-      content: t('skill_lib_withdraw_note',
-        `撤回后它不再等待复核,也不会再生效;正文留在版本历史里。agent 当前用的 v${row.active_version} 不受影响。`),
+      title: t('skill_lib_withdraw_title', { defaultValue: '撤回自己提交的 v{{version}}?', version: version }),
+      content: t('skill_lib_withdraw_note', { defaultValue: '撤回后它不再等待复核,也不会再生效;正文留在版本历史里。agent 当前用的 v{{active}} 不受影响。', active: row.active_version }),
       okText: t('skill_lib_withdraw_ok', '撤回'),
       cancelText: t('common_cancel', '取消'),
       onOk: async () => {
@@ -514,7 +523,7 @@ const SkillLibrary: React.FC = () => {
 
   const doRollback = (row: Skill, version: number) => {
     Modal.confirm({
-      title: t('skill_lib_rollback_title', `回滚到 v${version}?`),
+      title: t('skill_lib_rollback_title', { defaultValue: '回滚到 v{{version}}?', version: version }),
       content: t('skill_lib_rollback_note',
         '会用该版本的内容生成一个新版本,历史不会被覆盖。'),
       okText: t('skill_lib_rollback_ok', '回滚'),
@@ -587,7 +596,7 @@ const SkillLibrary: React.FC = () => {
     }
     if (ok) message.success(okMsg(ok))
     if (failed.length) {
-      message.error(t('skill_lib_batch_failed', `${failed.length} 条失败:${failed.join('、')}`))
+      message.error(t('skill_lib_batch_failed', { defaultValue: '{{count}} 条失败:{{items}}', count: failed.length, items: failed.join('、') }))
     }
     exitSelectMode()
     fetch()
@@ -603,15 +612,14 @@ const SkillLibrary: React.FC = () => {
     // Say what is being left out. Acting on 3 of the 5 you ticked without a
     // word is how someone walks away believing all five changed.
     if (targets.length < all.length) {
-      message.info(t('skill_lib_batch_skipped',
-        `选中 ${all.length} 条,其中 ${all.length - targets.length} 条已是该状态或已删除,将跳过`))
+      message.info(t('skill_lib_batch_skipped', { defaultValue: '选中 {{total}} 条,其中 {{skipped}} 条已是该状态或已删除,将跳过', total: all.length, skipped: all.length - targets.length }))
     }
     runBatch(
       targets,
       s => skillApi.setStatus(s.id, next),
       n => next === 'active'
-        ? t('skill_lib_batch_enabled', `已启用 ${n} 条`)
-        : t('skill_lib_batch_disabled', `已停用 ${n} 条,绑定关系保留`),
+        ? t('skill_lib_batch_enabled', { defaultValue: '已启用 {{count}} 条', count: n })
+        : t('skill_lib_batch_disabled', { defaultValue: '已停用 {{count}} 条,绑定关系保留', count: n }),
     )
   }
 
@@ -632,22 +640,20 @@ const SkillLibrary: React.FC = () => {
     const bound = targets.filter(r => (r.usage?.active_count || 0) > 0)
 
     Modal.confirm({
-      title: t('skill_lib_batch_delete_title', `删除选中的 ${targets.length} 条 skill?`),
+      title: t('skill_lib_batch_delete_title', { defaultValue: '删除选中的 {{count}} 条 skill?', count: targets.length }),
       width: 560,
       content: (
         <div>
           {skipped > 0 && (
             <Alert type="info" showIcon style={{ marginBottom: 12 }}
-              message={t('skill_lib_batch_delete_skipped',
-                `另有 ${skipped} 条已经是删除状态,不在本次操作内`)} />
+              message={t('skill_lib_batch_delete_skipped', { defaultValue: '另有 {{count}} 条已经是删除状态,不在本次操作内', count: skipped })} />
           )}
           {affected > 0 ? (
             <Alert
               type="warning"
               showIcon
               style={{ marginBottom: 12 }}
-              message={t('skill_lib_batch_delete_impact',
-                `其中 ${bound.length} 条正在被使用,共影响 ${affected} 个 agent 绑定`)}
+              message={t('skill_lib_batch_delete_impact', { defaultValue: '其中 {{count}} 条正在被使用,共影响 {{affected}} 个 agent 绑定', count: bound.length, affected: affected })}
               description={
                 <>
                   <div>{bound.map(r => `${r.name}(${r.usage?.active_count})`).join(' · ')}</div>
@@ -668,13 +674,13 @@ const SkillLibrary: React.FC = () => {
           </Text>
         </div>
       ),
-      okText: t('skill_lib_batch_delete_ok', `删除 ${targets.length} 条`),
+      okText: t('skill_lib_batch_delete_ok', { defaultValue: '删除 {{count}} 条', count: targets.length }),
       okButtonProps: { danger: true },
       cancelText: t('common_cancel', '取消'),
       onOk: () => runBatch(
         targets,
         s => skillApi.delete(s.id),
-        n => t('skill_lib_batch_deleted', `已删除 ${n} 条`),
+        n => t('skill_lib_batch_deleted', { defaultValue: '已删除 {{count}} 条', count: n }),
       ),
     })
   }
@@ -756,8 +762,7 @@ const SkillLibrary: React.FC = () => {
       try {
         const res = await skillApi.parseImportFiles(mdFiles)
         if (res.skipped?.length) {
-          message.warning(t('skill_lib_import_md_skipped',
-            `${res.skipped.length} 个文件的文件名不能作为标识,已跳过:${res.skipped.join('、')}`))
+          message.warning(t('skill_lib_import_md_skipped', { defaultValue: '{{count}} 个文件的文件名不能作为标识,已跳过:{{items}}', count: res.skipped.length, items: res.skipped.join('、') }))
         }
         res.skills.forEach((sk: any) => {
           accepted.push({ name: `${sk.code}.md`, skills: [sk] })
@@ -773,12 +778,12 @@ const SkillLibrary: React.FC = () => {
       try {
         parsed = JSON.parse(await file.text())
       } catch {
-        message.error(t('skill_lib_import_bad_json', `${file.name} 不是合法的 JSON,已跳过`))
+        message.error(t('skill_lib_import_bad_json', { defaultValue: '{{name}} 不是合法的 JSON,已跳过', name: file.name }))
         continue
       }
       const skills = Array.isArray(parsed) ? parsed : parsed.skills
       if (!Array.isArray(skills)) {
-        message.error(t('skill_lib_import_no_skills', `${file.name} 里没有 skills 数组,已跳过`))
+        message.error(t('skill_lib_import_no_skills', { defaultValue: '{{name}} 里没有 skills 数组,已跳过', name: file.name }))
         continue
       }
       accepted.push({ name: file.name, skills })
@@ -804,10 +809,9 @@ const SkillLibrary: React.FC = () => {
     if (!skills.length) return
     try {
       const res = await skillApi.import({ skills })
-      message.success(t('skill_lib_imported',
-        `新增 ${res.created.length} 条,更新 ${res.updated.length} 条`))
+      message.success(t('skill_lib_imported', { defaultValue: '新增 {{created}} 条,更新 {{updated}} 条', created: res.created.length, updated: res.updated.length }))
       if (res.failed?.length) {
-        message.warning(t('skill_lib_import_partial', `${res.failed.length} 条失败,详见预览`))
+        message.warning(t('skill_lib_import_partial', { defaultValue: '{{count}} 条失败,详见预览', count: res.failed.length }))
       }
       setImportOpen(false)
       setImportFiles([])
@@ -906,9 +910,11 @@ const SkillLibrary: React.FC = () => {
           {v === 'disabled' && <Tag>{t('skill_lib_status_disabled', '停用')}</Tag>}
           {v === 'deleted' && <Tag color="red">{t('skill_lib_status_deleted', '已删除')}</Tag>}
           {r.needs_review && (
-            <Tooltip title={t('skill_lib_pending_tip',
-              `${(r.pending_authors || []).join('、') || '?'} 提交的版本在等复核,`
-              + `agent 仍在用 v${r.active_version}`)}>
+            <Tooltip title={t('skill_lib_pending_tip', {
+              defaultValue: '{{authors}} 提交的版本在等复核,agent 仍在用 v{{active}}',
+              authors: (r.pending_authors || []).join('、') || '?',
+              active: r.active_version,
+            })}>
               <Tag color="orange">{t('skill_lib_pending_tag', '待复核')}</Tag>
             </Tooltip>
           )}
@@ -1098,7 +1104,7 @@ const SkillLibrary: React.FC = () => {
             showSizeChanger: true,
             pageSizeOptions: [10, 20, 50, 100],
             onChange: (p, ps) => { setPage(p); setPageSize(ps) },
-            showTotal: total => t('skill_lib_total', `共 ${total} 条`),
+            showTotal: total => t('skill_lib_total', { defaultValue: '共 {{count}} 条', count: total }),
           }}
           locale={{ emptyText: <Empty description={t('skill_lib_empty', '正式Skill 还是空的')} /> }}
         />
@@ -1112,8 +1118,8 @@ const SkillLibrary: React.FC = () => {
         title={isNew
           ? t('skill_lib_new', '新建 Skill')
           : readOnly
-            ? t('skill_lib_view_title', `查看 — ${editing?.name}`)
-            : t('skill_lib_edit_title', `编辑 — ${editing?.name}`)}
+            ? t('skill_lib_view_title', { defaultValue: '查看 — {{name}}', name: editing?.name })
+            : t('skill_lib_edit_title', { defaultValue: '编辑 — {{name}}', name: editing?.name })}
         extra={
           <Space>
             <Button onClick={() => setEditing(null)}>
@@ -1135,8 +1141,7 @@ const SkillLibrary: React.FC = () => {
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message={t('skill_lib_pending_review',
-              `${editing.pending.length} 个版本待复核 —— agent 当前仍在使用 v${editing.active_version}`)}
+            message={t('skill_lib_pending_review', { defaultValue: '{{count}} 个版本待复核 —— agent 当前仍在使用 v{{active}}', count: editing.pending.length, active: editing.active_version })}
             description={
               <>
                 <div style={{ marginBottom: 8 }}>
@@ -1175,11 +1180,10 @@ const SkillLibrary: React.FC = () => {
             // Only what the rest of the UI cannot already say. That it is
             // deleted and read-only is visible from the title and the disabled
             // form; when it happened and who lost a binding is not.
-            message={t('skill_lib_deleted_at', `已于 ${fmtTime(editing?.deleted_at)} 删除`)}
+            message={t('skill_lib_deleted_at', { defaultValue: '已于 {{time}} 删除', time: fmtTime(editing?.deleted_at) })}
             description={
               editing?.deleted_bindings?.length
-                ? t('skill_lib_deleted_unbound_list',
-                    `解除了 ${editing.deleted_bindings.length} 个绑定:${editing.deleted_bindings.map(b => b.agent_name).join('、')}`)
+                ? t('skill_lib_deleted_unbound_list', { defaultValue: '解除了 {{count}} 个绑定:{{items}}', count: editing.deleted_bindings.length, items: editing.deleted_bindings.map(b => b.agent_name).join('、') })
                 : undefined
             }
           />
@@ -1189,14 +1193,13 @@ const SkillLibrary: React.FC = () => {
             type="warning"
             showIcon
             style={{ marginBottom: 16 }}
-            message={t('skill_lib_edit_impact', `${usage.active_count} 个 agent 正在使用它`)}
+            message={t('skill_lib_edit_impact', { defaultValue: '{{count}} 个 agent 正在使用它', count: usage.active_count })}
             description={
               <>
                 <div>{usage.agents.filter(a => a.is_active).map(a => a.name).join(' · ')}</div>
                 {usage.inactive_count > 0 && (
                   <div style={{ marginTop: 4 }}>
-                    {t('skill_lib_edit_impact_inactive',
-                      `另有 ${usage.inactive_count} 个已停用的 agent 绑定 —— 它们被重新启用时会用上这里的改动`)}
+                    {t('skill_lib_edit_impact_inactive', { defaultValue: '另有 {{count}} 个已停用的 agent 绑定 —— 它们被重新启用时会用上这里的改动', count: usage.inactive_count })}
                   </div>
                 )}
               </>
@@ -1230,11 +1233,12 @@ const SkillLibrary: React.FC = () => {
             </Form.Item>
           </Space>
 
-          {/* One description, and it is `summary` — the line the list and the
-              agent skill picker show. The model-facing text lives in the body's
-              frontmatter below, so a second box here only asked the operator to
-              write the same thing twice and keep the two in step. */}
-          <Form.Item name="summary" label={t('skill_lib_field_desc', '描述')}>
+          {/* Two texts, two readers, and now exactly one box each. `summary` is
+              the line a person reads in the list and the skill picker;
+              `description` is what the model is given, and it stopped living in
+              the body when the frontmatter moved into columns — leaving it with
+              no input at all until this went back. */}
+          <Form.Item name="summary" label={t('skill_lib_field_summary', '简介')}>
             <Input maxLength={255} showCount />
           </Form.Item>
 
@@ -1259,6 +1263,36 @@ const SkillLibrary: React.FC = () => {
               small, and a bespoke editor would be more code than the thing it
               edits. Validated on save — a malformed constraint would otherwise
               be discovered only when an agent silently stopped honouring it. */}
+          <Form.Item
+            name="tags_text"
+            label={
+              <Space size={4}>
+                {t('skill_lib_field_tags', '标签')}
+                <Tooltip title={t('skill_lib_tags_help',
+                  '只用于本页检索,不进提示词。逗号分隔')}>
+                  <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                </Tooltip>
+              </Space>
+            }
+          >
+            <Input placeholder="餐厅推荐, 美食, 出行" />
+          </Form.Item>
+
+          <Form.Item
+            name="description"
+            label={
+              <Space size={4}>
+                {t('skill_lib_field_desc', '描述')}
+                <Tooltip title={t('skill_lib_desc_help',
+                  '随技能一起进入提示词,模型据此判断何时按它执行')}>
+                  <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                </Tooltip>
+              </Space>
+            }
+          >
+            <TextArea autoSize={{ minRows: 2, maxRows: 8 }} />
+          </Form.Item>
+
           <Form.Item
             name="tool_sequence_text"
             label={
@@ -1303,7 +1337,7 @@ const SkillLibrary: React.FC = () => {
             name="content"
             label={
               <Space size={4}>
-                {t('skill_lib_field_content', 'SKILL.md 全文')}
+                {t('skill_lib_field_content', 'Skill 正文')}
                 <Button
                   type="link"
                   size="small"
@@ -1327,7 +1361,7 @@ const SkillLibrary: React.FC = () => {
       {/* ── history ────────────────────────────────────────────────────── */}
       <Modal
         open={!!historyOf}
-        title={t('skill_lib_history_title', `版本历史 — ${historyOf?.name}`)}
+        title={t('skill_lib_history_title', { defaultValue: '版本历史 — {{name}}', name: historyOf?.name })}
         width={720}
         onCancel={() => setHistoryOf(null)}
         footer={null}
@@ -1455,7 +1489,7 @@ const SkillLibrary: React.FC = () => {
 
       <Modal
         open={!!revisionView}
-        title={t('skill_lib_rev_view_title', `v${revisionView?.version} 全文`)}
+        title={t('skill_lib_rev_view_title', { defaultValue: 'v{{version}} 全文', version: revisionView?.version })}
         width={760}
         onCancel={() => setRevisionView(null)}
         footer={null}
@@ -1469,7 +1503,7 @@ const SkillLibrary: React.FC = () => {
       {/* ── review ─────────────────────────────────────────────────────── */}
       <Modal
         open={!!reviewOf}
-        title={t('skill_lib_review_title', `复核 — ${reviewOf?.name}`)}
+        title={t('skill_lib_review_title', { defaultValue: '复核 — {{name}}', name: reviewOf?.name })}
         width={1040}
         onCancel={() => setReviewOf(null)}
         footer={(() => {
@@ -1510,7 +1544,7 @@ const SkillLibrary: React.FC = () => {
                     disabled={reviewVersion == null}
                     onClick={() => reviewOf && approveReview(reviewOf, reviewVersion!)}
                   >
-                    {t('skill_lib_approve', `通过 v${reviewVersion ?? ''}`)}
+                    {t('skill_lib_approve', { defaultValue: '通过 v{{version}}', version: reviewVersion ?? '' })}
                   </Button>
                 </>
               )}
@@ -1535,7 +1569,7 @@ const SkillLibrary: React.FC = () => {
               {queued.length > 1 && (
                 <div style={{ marginBottom: 12 }}>
                   <Text type="secondary" style={{ marginRight: 8 }}>
-                    {t('skill_lib_review_pick', `${queued.length} 个版本在等复核,选择要处理的:`)}
+                    {t('skill_lib_review_pick', { defaultValue: '{{count}} 个版本在等复核,选择要处理的:', count: queued.length })}
                   </Text>
                   <Radio.Group
                     size="small"
@@ -1576,8 +1610,7 @@ const SkillLibrary: React.FC = () => {
                     ))}
                     <div style={{ marginTop: 6 }}>
                       <Text type="secondary">
-                        {t('skill_lib_review_submitter',
-                          `提交人:${cur?.author || '—'} · ${fmtTime(cur?.created_at || '')}`)}
+                        {t('skill_lib_review_submitter', { defaultValue: '提交人:{{author}} · {{time}}', author: cur?.author || '—', time: fmtTime(cur?.created_at || '') })}
                         {cur?.message ? ` · ${cur.message}` : ''}
                       </Text>
                     </div>
@@ -1598,7 +1631,7 @@ const SkillLibrary: React.FC = () => {
               </div>
 
               <div style={{ marginBottom: 6 }}>
-                <Tag color="orange">{t('skill_lib_review_new', `待复核 v${reviewVersion ?? ''}`)}</Tag>
+                <Tag color="orange">{t('skill_lib_review_new', { defaultValue: '待复核 v{{version}}', version: reviewVersion ?? '' })}</Tag>
                 <Text type="secondary" style={{ fontSize: 12 }}>
                   {t('skill_lib_review_new_note', '黄色标记处即触发复核的内容;通过后才会被 agent 加载')}
                 </Text>
@@ -1618,8 +1651,7 @@ const SkillLibrary: React.FC = () => {
                 style={{ marginTop: 8 }}
                 items={[{
                   key: 'live',
-                  label: t('skill_lib_review_show_live',
-                    `对照 agent 当前加载的 v${reviewOf.active_version}`),
+                  label: t('skill_lib_review_show_live', { defaultValue: '对照 agent 当前加载的 v{{version}}', version: reviewOf.active_version }),
                   children: (
                     <pre style={{
                       maxHeight: '36vh', overflow: 'auto', background: 'rgba(0,0,0,.03)',
@@ -1697,8 +1729,7 @@ const SkillLibrary: React.FC = () => {
             type="info"
             showIcon
             style={{ marginTop: 12 }}
-            message={t('skill_lib_import_dupes',
-              `${importDupes.length} 个标识在多个文件里都出现了,以最后选中的文件为准`)}
+            message={t('skill_lib_import_dupes', { defaultValue: '{{count}} 个标识在多个文件里都出现了,以最后选中的文件为准', count: importDupes.length })}
             description={importDupes.join('、')}
           />
         )}
@@ -1707,12 +1738,12 @@ const SkillLibrary: React.FC = () => {
           <div style={{ marginTop: 16 }}>
             <Space direction="vertical" size={4} style={{ width: '100%' }}>
               <Text>
-                {t('skill_lib_import_will_create', `将新增 ${preview.will_create.length} 条`)}
+                {t('skill_lib_import_will_create', { defaultValue: '将新增 {{count}} 条', count: preview.will_create.length })}
                 {preview.will_create.length > 0 &&
                   <Text type="secondary">:{preview.will_create.map((x: any) => x.code).join(', ')}</Text>}
               </Text>
               <Text>
-                {t('skill_lib_import_will_update', `将更新 ${preview.will_update.length} 条`)}
+                {t('skill_lib_import_will_update', { defaultValue: '将更新 {{count}} 条', count: preview.will_update.length })}
                 {preview.will_update.length > 0 &&
                   <Text type="secondary">:{preview.will_update.map((x: any) => x.code).join(', ')}</Text>}
               </Text>
@@ -1720,7 +1751,7 @@ const SkillLibrary: React.FC = () => {
                 <Alert
                   type="error"
                   showIcon
-                  message={t('skill_lib_import_invalid', `${preview.invalid.length} 条无法导入`)}
+                  message={t('skill_lib_import_invalid', { defaultValue: '{{count}} 条无法导入', count: preview.invalid.length })}
                   description={preview.invalid.map((x: any) => `${x.code}: ${x.reason}`).join('; ')}
                 />
               )}

@@ -843,8 +843,7 @@ const AgentList: React.FC = () => {
         // Writing the config back while it still points at skills that do not
         // exist would either persist a dangling reference or drop it silently.
         // Neither is acceptable, so the operator decides.
-        message.error(t('agent_edit_skills_missing_block',
-          `有 ${missingSkills.length} 个 skill 已不存在,请先移除后再保存:${missingSkills.join('、')}`))
+        message.error(t('agent_edit_skills_missing_block', { defaultValue: '有 {{count}} 个 skill 已不存在,请先移除后再保存:{{items}}', count: missingSkills.length, items: missingSkills.join('、') }))
         return
       }
       if (values.department === notGroupedLabel) values.department = ''
@@ -1555,8 +1554,7 @@ const AgentList: React.FC = () => {
                         type="error"
                         showIcon
                         style={{ marginBottom: 16 }}
-                        message={t('agent_edit_skills_missing',
-                          `${missingSkills.length} 个绑定的 skill 已不存在`)}
+                        message={t('agent_edit_skills_missing', { defaultValue: '{{count}} 个绑定的 skill 已不存在', count: missingSkills.length })}
                         description={
                           <div>
                             <div style={{ marginBottom: 8 }}>

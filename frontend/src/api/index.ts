@@ -862,6 +862,8 @@ export interface Skill {
   head_content?: string
   /** [{step, required_tool, args?}] — the executor turns this into a hard
    *  "call this tool at this step" constraint. */
+  /** Keywords for finding the skill on this page. Not given to the model. */
+  tags?: string[] | null
   tool_sequence?: any[] | null
   /** Detail responses only: the exact text the executor injects, body plus the
    *  composed frontmatter. */

@@ -365,8 +365,7 @@ const SkillList: React.FC<SkillListProps> = ({ embedded = false }) => {
             </>
           )}
           {record.promoted_skill && (
-            <Tooltip title={t('skill_action_view_promoted',
-              `已入库为 ${record.promoted_skill.code},点击查看`)}>
+            <Tooltip title={t('skill_action_view_promoted', { defaultValue: '已入库为 {{code}},点击查看', code: record.promoted_skill.code })}>
               <Button
                 size="small"
                 type="link"
@@ -485,7 +484,7 @@ const SkillList: React.FC<SkillListProps> = ({ embedded = false }) => {
             pageSize,
             total,
             onChange: p => setPage(p),
-            showTotal: (tot) => t('skill_pagination_total', `Total ${tot} skills`, { total: tot }),
+            showTotal: (tot) => t('skill_pagination_total', { defaultValue: '共 {{total}} 条', total: tot }),
           }}
         />
       </Card>
@@ -611,7 +610,7 @@ const SkillList: React.FC<SkillListProps> = ({ embedded = false }) => {
       {/* ── 入库 ─────────────────────────────────────────────────────────── */}
       <Modal
         open={!!promoteOf}
-        title={t('skill_promote_title', `入库 — ${promoteOf?.name}`)}
+        title={t('skill_promote_title', { defaultValue: '入库 — {{name}}', name: promoteOf?.name })}
         width={720}
         confirmLoading={promoting}
         onOk={doPromote}
@@ -640,8 +639,7 @@ const SkillList: React.FC<SkillListProps> = ({ embedded = false }) => {
 
           <div style={{ marginBottom: 8 }}>
             <Text type="secondary">
-              {t('skill_promote_source',
-                `来源:提炼自 ${promoteOf?.source_task_ids?.length || 0} 个任务`)}
+              {t('skill_promote_source', { defaultValue: '来源:提炼自 {{count}} 个任务', count: promoteOf?.source_task_ids?.length || 0 })}
             </Text>
           </div>
 
