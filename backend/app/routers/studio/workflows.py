@@ -1,5 +1,6 @@
 import uuid
 import json
+import logging
 import re
 from datetime import datetime
 from io import BytesIO
@@ -17,6 +18,8 @@ from app.services.webhook_security import (
     validate_timestamp,
     verify_timestamped_hmac,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/workflows", tags=["workflows"])
 
@@ -194,6 +197,46 @@ def list_workflows(
     }
 
 
+# ── Runtime identity must never live in workflow.variables ────────────────────
+#
+# `variables` is persisted config, but the engine also uses it verbatim as the
+# per-run tool context (`tool_context = dict(variables or {})` in
+# workflow_engine.py). Anything stored under a context key therefore becomes a
+# permanent override of the value the CALLER would otherwise supply — and the
+# MCP layer reads `_custom_agent_id` as the authorizing principal, the identity
+# every call is audited against (docs/MCP_Knowledge_Base.md §7).
+#
+# Export/import already move agent identity portably, via `agent_slug` resolved
+# to a local id on import. That mechanism exists precisely to keep one
+# environment's agent ids out of another's. A second copy of the same identity
+# riding along inside `variables` walks straight past it, and wins: the engine
+# only derives `_custom_agent_id` from `_agent_id` when the former is absent.
+#
+# Observed: an imported workflow carried `_custom_agent_id` from its source
+# environment — an agent that exists in no local table — and every run of it
+# failed with HTTP 403 MCP_CAPABILITY_NOT_AUTHORIZED, naming a principal nobody
+# could look up. Re-binding the workflow in the UI could not fix it, because
+# re-binding writes `_agent_id`, which the stale key outranks.
+#
+# These keys are stripped on the way in and on the way out. Nothing is lost:
+# every one of them is injected per-run from the real caller.
+_RUNTIME_IDENTITY_KEYS = ("_custom_agent_id", "_agent_id", "_user_id", "_tenant_id")
+
+
+def _strip_runtime_identity(variables, *, where: str = ""):
+    """Return ``variables`` without the per-run identity keys."""
+    if not isinstance(variables, dict):
+        return variables
+    dropped = {k: v for k, v in variables.items() if k in _RUNTIME_IDENTITY_KEYS}
+    if not dropped:
+        return variables
+    logger.warning(
+        "Dropped runtime identity keys from workflow variables%s: %s",
+        f" ({where})" if where else "", ", ".join(sorted(dropped)),
+    )
+    return {k: v for k, v in variables.items() if k not in _RUNTIME_IDENTITY_KEYS}
+
+
 @router.post("", response_model=schemas.WorkflowResponse, status_code=201)
 def create_workflow(workflow_data: schemas.WorkflowCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
     stored_triggers = _prepare_workflow_triggers(workflow_data.triggers)
@@ -207,7 +250,7 @@ def create_workflow(workflow_data: schemas.WorkflowCreate, db: Session = Depends
             description=workflow_data.description,
             dag=workflow_data.dag,
             triggers=stored_triggers,
-            variables=workflow_data.variables,
+            variables=_strip_runtime_identity(workflow_data.variables, where="create"),
             version=version,
             agent_id=workflow_data.agent_id,
             created_at=created_at,
@@ -264,7 +307,7 @@ def _build_workflow_export_payload(workflow, db: Session) -> dict:
         ).first()
         if agent:
             agent_slug = agent.slug
-    variables = dict(workflow.variables or {})
+    variables = _strip_runtime_identity(dict(workflow.variables or {}), where="export")
     workflow_key = variables.get("_workflow_key") or _workflow_portable_key(workflow.name)
     variables["_workflow_key"] = workflow_key
     return {
@@ -337,7 +380,7 @@ def import_workflow(
 
     name = (wf_data.get("name") or "Imported Workflow").strip()
     workflow_key = (wf_data.get("workflow_key") or "").strip() or _workflow_portable_key(name)
-    variables = dict(wf_data.get("variables") or {})
+    variables = _strip_runtime_identity(dict(wf_data.get("variables") or {}), where="import")
     variables["_workflow_key"] = workflow_key
 
     if mode == "copy" and db.query(models.Workflow).filter(models.Workflow.name == name).first():
@@ -452,7 +495,7 @@ def update_workflow(
             existing_triggers=workflow.triggers,
         )
     if data.variables is not None:
-        workflow.variables = data.variables
+        workflow.variables = _strip_runtime_identity(data.variables, where="update")
     # Only touch agent binding when the client explicitly sends the field (so a DAG-only
     # save doesn't unbind). Sending agent_id=null is a deliberate unbind.
     _fields_set = getattr(data, "model_fields_set", None) or getattr(data, "__fields_set__", set())

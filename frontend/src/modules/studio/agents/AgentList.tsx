@@ -813,7 +813,23 @@ const AgentList: React.FC = () => {
       if (!response.ok) {
         throw new Error(payload?.detail || 'import failed')
       }
-      message.success(`${t('agent_list_import_success')}：${payload.name || file.name}`)
+      const missing: string[] = payload?.missing_skills || []
+      if (missing.length) {
+        // The import deliberately does not refuse over these — see the importer.
+        // But the reference is dangling, and the only other moment it surfaces
+        // is a rejected save later on, which reads as a bug rather than as the
+        // consequence of this import. Say it now, and say which ones.
+        message.warning({
+          content: t(
+            'agent_list_import_missing_skills',
+            `${payload.name || file.name} 已导入，但其中 ${missing.length} 个 skill 本环境没有：` +
+            `${missing.join('、')}。编辑该 Agent 时需要先移除它们才能保存。`,
+          ),
+          duration: 10,
+        })
+      } else {
+        message.success(`${t('agent_list_import_success')}：${payload.name || file.name}`)
+      }
       fetchAgents()
     } catch (error: any) {
       message.error(error?.message || t('agent_list_import_failure'))

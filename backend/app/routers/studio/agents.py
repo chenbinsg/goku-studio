@@ -15,6 +15,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app import auth
@@ -102,6 +103,10 @@ class AgentImportResult(BaseModel):
     imported_at: str
     action: str = "created"
     slug: str | None = None
+    # Skill references this environment has not got. The import keeps them
+    # rather than refusing the file; without the field here the response_model
+    # would silently drop the list and nobody would be told.
+    missing_skills: list[str] = Field(default_factory=list)
 
 
 class AgentBatchExportRequest(BaseModel):
@@ -372,7 +377,7 @@ def _resolve_figure_path(figure_url: str | None) -> Path | None:
     return None
 
 
-def _build_export_payload(agent) -> dict:
+def _build_export_payload(agent, db) -> dict:
     figure_asset = None
     figure_path = _resolve_figure_path(getattr(agent, "figure_url", None))
     if figure_path and figure_path.suffix.lower() in _ICON_EXTS:
@@ -396,7 +401,7 @@ def _build_export_payload(agent) -> dict:
             "category": getattr(agent, "category", None),
             "figure_url": agent.figure_url,
             "system_prompt_override": agent.system_prompt_override,
-            "skills": agent.skills or [],
+            "skills": _skill_refs_for_export(db, agent.skills),
             "allowed_tools": agent.allowed_tools,
             "model_override": agent.model_override,
             "max_steps": agent.max_steps,
@@ -453,6 +458,58 @@ def _write_imported_figure(agent_name: str, figure_asset: dict | None) -> str | 
     target = icons_root / target_name
     target.write_bytes(content)
     return f"/icons/{target_name}"
+
+
+def _skill_id_code_maps(db) -> tuple[dict[str, str], dict[str, str]]:
+    """``(id → code, code → id)`` for the Skill 库.
+
+    A read-only lookup, deliberately without a Skill model on this side: the
+    library has exactly one implementation and it lives in goku-core (see
+    routers/studio/skills.py). Two columns of a shared table are all that is
+    needed to make an export portable, and claiming the model here would be
+    claiming the ownership.
+    """
+    try:
+        rows = db.execute(sa_text("SELECT id, code FROM skills")).fetchall()
+    except Exception:  # noqa: BLE001 — a missing table must not break export
+        return {}, {}
+    by_id = {str(r[0]): str(r[1]) for r in rows}
+    return by_id, {c: i for i, c in by_id.items()}
+
+
+def _skill_refs_for_export(db, skill_ids) -> list[str]:
+    """Skill ids → codes for a portable export.
+
+    ``id`` is a per-environment uuid; ``code`` is the stable handle. An export
+    carrying ids can only be imported back into the environment that produced
+    it. Anything unmappable is passed through unchanged rather than dropped —
+    a reference the other side has to deal with beats one that vanished.
+    """
+    refs = [r for r in (skill_ids or []) if r]
+    if not refs:
+        return []
+    by_id, _ = _skill_id_code_maps(db)
+    return [by_id.get(r, r) for r in refs]
+
+
+def _resolve_skill_refs(db, refs) -> tuple[list[str], list[str]]:
+    """Map an agent's skill references onto ids. Returns ``(resolved, unknown)``.
+
+    Accepts an id (already resolved) or a code (what an export carries).
+    """
+    refs = [r for r in (refs or []) if r]
+    if not refs:
+        return [], []
+    by_id, by_code = _skill_id_code_maps(db)
+    resolved, missing = [], []
+    for ref in refs:
+        if ref in by_id:
+            resolved.append(ref)
+        elif ref in by_code:
+            resolved.append(by_code[ref])
+        else:
+            missing.append(ref)
+    return resolved, missing
 
 
 def _filter_valid_skills(skills) -> list[str]:
@@ -1073,7 +1130,7 @@ def export_agent(
     # Export yields the full editable seed JSON (system prompt, tools) — config-level.
     if not _user_can_config(user, agent, db):
         raise HTTPException(status_code=403, detail="No export permission for this agent")
-    payload = _build_export_payload(agent)
+    payload = _build_export_payload(agent, db)
     filename = f"{_slugify_filename(agent.name)}.agent.json"
     auth.log_audit_action(db, user.id, "export_agent", "agent", agent.id, {"name": agent.name})
     content = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
@@ -1125,7 +1182,7 @@ def export_agents_batch(
 
     with zipfile.ZipFile(archive, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for agent in ordered_agents:
-            payload = _build_export_payload(agent)
+            payload = _build_export_payload(agent, db)
             base_name = _slugify_filename(agent.name)
             file_name = f"{base_name}.agent.json"
             if file_name in used_names:
@@ -1178,7 +1235,12 @@ def import_agent(
     if not name:
         raise HTTPException(status_code=400, detail="Imported agent is missing a name")
 
-    skills = _filter_valid_skills(agent_data.get("skills") or [])
+    # Codes resolve to ids; anything unknown here is kept as written rather than
+    # blocking the import — the editor shows it struck through and refuses the
+    # SAVE until it is removed. Import brings the config in; the edit is where
+    # the config has to be clean.
+    _resolved, missing_skills = _resolve_skill_refs(db, agent_data.get("skills") or [])
+    skills = _filter_valid_skills(_resolved + missing_skills)
 
     allowed_tools = agent_data.get("allowed_tools")
     if allowed_tools is not None:
@@ -1236,6 +1298,7 @@ def import_agent(
             "name": existing.name,
             "slug": existing.slug,
             "action": "updated",
+            "missing_skills": missing_skills,
             "imported_at": now.isoformat() + "Z",
         }
 
@@ -1290,6 +1353,7 @@ def import_agent(
         "name": agent.name,
         "slug": agent.slug,
         "action": "created",
+        "missing_skills": missing_skills,
         "imported_at": now.isoformat() + "Z",
     }
 
