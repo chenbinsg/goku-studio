@@ -824,6 +824,13 @@ export interface Skill {
   id: string
   code: string
   name: string
+  /** One line, for a person — the list and the agent skill picker show this.
+   *  Empty means nobody has written one yet; it is deliberately NOT filled in
+   *  from `description`. */
+  summary: string
+  /** SKILL.md frontmatter text, for the MODEL — it decides from this whether to
+   *  load the skill, so it is long and full of trigger phrases (101 chars on
+   *  average across the library, up to 597). Not a summary. */
   description: string
   category: string | null
   status: 'active' | 'disabled' | 'deleted'

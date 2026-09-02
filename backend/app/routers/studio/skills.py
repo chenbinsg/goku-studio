@@ -35,6 +35,9 @@ class SkillCreate(BaseModel):
     name: str
     content: str
     description: str = ""
+    # Mirrors Core's schema. Missing here means Pydantic drops the field before
+    # the proxy call and the summary silently never arrives.
+    summary: str = ""
     category: Optional[str] = None
     status: str = "active"
     auto_injectable: bool = False
@@ -45,6 +48,7 @@ class SkillUpdate(BaseModel):
     name: Optional[str] = None
     content: Optional[str] = None
     description: Optional[str] = None
+    summary: Optional[str] = None
     category: Optional[str] = None
     auto_injectable: Optional[bool] = None
     message: Optional[str] = None

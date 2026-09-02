@@ -83,7 +83,8 @@ const { TextArea } = Input
 
 const TEMPLATE = `---
 name: 新技能
-description: 一句话说明这个技能解决什么问题
+summary: 一句话说清它是什么（给人看，列表里显示这句）
+description: 什么时候该加载这个技能（给模型看，可以长，堆触发词）
 ---
 
 ## 适用场景
@@ -215,7 +216,7 @@ const SkillLibrary: React.FC = () => {
     setEditing({} as Skill)
     setUsage(null)
     form.setFieldsValue({
-      code: '', name: '', description: '', category: undefined,
+      code: '', name: '', summary: '', description: '', category: undefined,
       content: TEMPLATE, auto_injectable: false,
     })
   }
@@ -230,7 +231,8 @@ const SkillLibrary: React.FC = () => {
       setEditing(full)
       setUsage(full.usage || null)
       form.setFieldsValue({
-        code: full.code, name: full.name, description: full.description,
+        code: full.code, name: full.name, summary: full.summary,
+        description: full.description,
         category: full.category, auto_injectable: full.auto_injectable,
         // The last text submitted, not the live one: with a draft queued, an
         // author who opens the editor is coming back to what they wrote. They
@@ -260,7 +262,7 @@ const SkillLibrary: React.FC = () => {
         // Only send what changed: core appends a revision whenever `content`
         // is present, so resending an untouched body would inflate the history.
         const patch: any = {}
-        for (const k of ['code', 'name', 'description', 'category', 'auto_injectable']) {
+        for (const k of ['code', 'name', 'summary', 'description', 'category', 'auto_injectable']) {
           if (values[k] !== (editing as any)[k]) patch[k] = values[k]
         }
         // Compare the body against what the editor was opened on — comparing it
@@ -777,6 +779,13 @@ const SkillLibrary: React.FC = () => {
         <Space direction="vertical" size={0}>
           <a onClick={() => openEdit(r)}>{r.name}</a>
           <Text type="secondary" style={{ fontSize: 12 }}>{r.code}</Text>
+          {/* The one-line summary, not `description`: that one is written for
+              the model, averages 101 characters and runs to 597 — it does not
+              fit a table cell and was never meant to. No fallback when it is
+              empty: a blank here is how you find the rows still to write. */}
+          {r.summary && (
+            <Text type="secondary" style={{ fontSize: 12, color: '#4b5563' }}>{r.summary}</Text>
+          )}
         </Space>
       ),
     },
@@ -1147,8 +1156,20 @@ const SkillLibrary: React.FC = () => {
             </Form.Item>
           </Space>
 
-          <Form.Item name="description" label={t('skill_lib_field_desc', '描述')}>
-            <Input />
+          <Form.Item
+            name="summary"
+            label={t('skill_lib_field_summary', '一句话说明')}
+            extra={t('skill_lib_summary_help', '给人看的 —— 列表和 agent 的技能下拉显示的就是这句。')}
+          >
+            <Input maxLength={255} showCount />
+          </Form.Item>
+
+          <Form.Item
+            name="description"
+            label={t('skill_lib_field_desc', '描述')}
+            extra={t('skill_lib_desc_help', '给模型看的 —— 它据此判断该不该加载这个技能，写长、把触发词写全都没关系。')}
+          >
+            <TextArea autoSize={{ minRows: 2, maxRows: 6 }} />
           </Form.Item>
 
           <Form.Item
