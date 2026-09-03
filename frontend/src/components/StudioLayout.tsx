@@ -245,10 +245,16 @@ export default function StudioLayout() {
       {/* Logo / title */}
       <div
         style={{
-          padding: '16px',
+          // Must match the Header height below (48px). Without an explicit
+          // height this block was sized by its padding + content (~54px), so
+          // its bottom border sat 6px lower than the top bar's and the two
+          // hairlines did not line up across the sidebar seam.
+          height: 48,
+          padding: '0 16px',
           display: 'flex',
           alignItems: 'center',
           gap: 8,
+          flexShrink: 0,
           borderBottom: `1px solid ${colorToken.colorBorderSecondary}`,
         }}
       >
