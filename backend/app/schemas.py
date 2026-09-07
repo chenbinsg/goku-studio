@@ -995,6 +995,10 @@ class MCPCapabilityListItem(BaseModel):
     quota_period: str | None = None
     quota_limit: int | None = None
     rate_limit: int | None = None
+    # Distinct enabled, non-deleted principals authorized on this capability —
+    # same definition the server list and the capability detail already use, so
+    # the number on the 能力 list matches the one on the 授权 tab.
+    authorized_principal_count: int = 0
     last_synced_at: datetime | None = None
     last_called_at: datetime | None = None
     created_at: datetime

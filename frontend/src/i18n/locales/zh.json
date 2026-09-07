@@ -1237,6 +1237,8 @@
   "mcp_detail_cap_col_status": "状态",
   "mcp_detail_cap_col_input_schema": "入参（* 必填）",
   "mcp_detail_cap_col_auth_mode": "授权模式",
+  "mcp_detail_cap_col_authz_count": "授权数",
+  "mcp_detail_cap_authz_all": "全员",
   "mcp_detail_cap_col_quota": "限额",
   "mcp_detail_cap_col_last_synced": "最近同步",
   "mcp_detail_cap_col_last_called": "最近调用",

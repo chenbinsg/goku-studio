@@ -1237,6 +1237,8 @@
   "mcp_detail_cap_col_status": "Status",
   "mcp_detail_cap_col_input_schema": "Params (* required)",
   "mcp_detail_cap_col_auth_mode": "Authorization",
+  "mcp_detail_cap_col_authz_count": "Authorized",
+  "mcp_detail_cap_authz_all": "All",
   "mcp_detail_cap_col_quota": "Quota",
   "mcp_detail_cap_col_last_synced": "Last synced",
   "mcp_detail_cap_col_last_called": "Last called",

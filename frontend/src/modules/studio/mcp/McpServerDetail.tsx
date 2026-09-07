@@ -340,6 +340,9 @@ interface MCPCapability {
   input_params?: string[]
   status: 'active' | 'inactive'
   authorization_mode?: 'required' | 'public'
+  // Distinct enabled principals authorized on this capability. Same number the
+  // 授权 tab lists, so the two views agree without opening each row.
+  authorized_principal_count?: number
   quota_enabled?: boolean
   quota_period?: string | null
   quota_limit?: number | null
@@ -539,6 +542,22 @@ const CapabilitiesTab: React.FC<{
       render: (v?: string) => (v || 'required') === 'public'
         ? <Tag color="green">{t('mcp_detail_cap_mode_public')}</Tag>
         : <Tag color="blue">{t('mcp_detail_cap_mode_required')}</Tag>,
+    },
+    {
+      title: t('mcp_detail_cap_col_authz_count'), dataIndex: 'authorized_principal_count',
+      key: 'authz_count', width: 90,
+      // A capability in default-deny mode with zero authorizations is callable
+      // by nobody — the case worth spotting from the list, so it reads as a
+      // muted 0 rather than a dash.
+      render: (v: number | undefined, r: MCPCapability) => {
+        const n = v ?? 0
+        if ((r.authorization_mode || 'required') === 'public') {
+          return <Text type="secondary">{t('mcp_detail_cap_authz_all')}</Text>
+        }
+        return n > 0
+          ? <Tag color="blue">{n}</Tag>
+          : <Text type="secondary">0</Text>
+      },
     },
     {
       title: t('mcp_detail_cap_col_quota'), key: 'quota', width: 140,

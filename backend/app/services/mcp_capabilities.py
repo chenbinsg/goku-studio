@@ -112,7 +112,47 @@ def _input_param_summary(input_schema) -> list[str]:
     return [f"{name}*" if name in required else name for name in props.keys()]
 
 
-def _capability_to_list_item(c: MCPCapability) -> MCPCapabilityListItem:
+def _authorized_principal_counts(
+    db: Session, capability_ids: list[str],
+) -> dict[str, int]:
+    """``{capability_id: distinct authorized principals}`` for a page of rows.
+
+    One GROUP BY for the whole page rather than a count per row: the 能力 list
+    pages up to 200 at a time, and a per-row query there is 200 round-trips for
+    one screen.
+
+    The filters mirror ``mcp_authorizations._authorized_principal_count``
+    exactly — enabled, not soft-deleted, de-duped by ``(principal_type,
+    principal_id)`` — so the number on this list is the same number the
+    capability detail and the 授权 tab show. A row with no authorizations is
+    absent from the GROUP BY and the caller defaults it to 0.
+    """
+    if not capability_ids:
+        return {}
+    from app.models import MCPCapabilityAuthorization
+
+    rows = (
+        db.query(
+            MCPCapabilityAuthorization.mcp_capability_id,
+            func.count(func.distinct(func.concat(
+                MCPCapabilityAuthorization.principal_type, ":",
+                MCPCapabilityAuthorization.principal_id,
+            ))),
+        )
+        .filter(
+            MCPCapabilityAuthorization.mcp_capability_id.in_(capability_ids),
+            MCPCapabilityAuthorization.enabled.is_(True),
+            MCPCapabilityAuthorization.deleted_at.is_(None),
+        )
+        .group_by(MCPCapabilityAuthorization.mcp_capability_id)
+        .all()
+    )
+    return {cap_id: int(n or 0) for cap_id, n in rows}
+
+
+def _capability_to_list_item(
+    c: MCPCapability, authorized_principal_count: int = 0,
+) -> MCPCapabilityListItem:
     return MCPCapabilityListItem(
         id=c.id,
         server_id=c.server_id,
@@ -126,6 +166,7 @@ def _capability_to_list_item(c: MCPCapability) -> MCPCapabilityListItem:
         quota_period=c.quota_period,
         quota_limit=c.quota_limit,
         rate_limit=c.rate_limit,
+        authorized_principal_count=authorized_principal_count,
         last_synced_at=c.last_synced_at,
         last_called_at=c.last_called_at,
         created_at=c.created_at,
@@ -213,7 +254,10 @@ def list_capabilities(
         .limit(size)
         .all()
     )
-    return total, [_capability_to_list_item(c) for c in rows]
+    counts = _authorized_principal_counts(db, [c.id for c in rows])
+    return total, [
+        _capability_to_list_item(c, counts.get(c.id, 0)) for c in rows
+    ]
 
 
 def get_capability_detail(

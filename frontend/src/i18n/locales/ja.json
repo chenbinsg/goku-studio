@@ -1237,6 +1237,8 @@
   "mcp_detail_cap_col_status": "ステータス",
   "mcp_detail_cap_col_input_schema": "パラメータ（* 必須）",
   "mcp_detail_cap_col_auth_mode": "認可モード",
+  "mcp_detail_cap_col_authz_count": "認可数",
+  "mcp_detail_cap_authz_all": "全員",
   "mcp_detail_cap_col_quota": "上限",
   "mcp_detail_cap_col_last_synced": "最終同期",
   "mcp_detail_cap_col_last_called": "最終呼び出し",
