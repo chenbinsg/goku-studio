@@ -37,6 +37,7 @@ from typing import Any, Optional, Tuple
 
 from fastapi import HTTPException, Request, status
 from sqlalchemy import func
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -700,6 +701,14 @@ def invoke_capability(
 
     output_preview = _summarize_output(str(response.get("output", "")))
 
+    # 锁顺序：父行 UPDATE 先于子行 INSERT。理由见
+    # mcp_authorizations.record_capability_call 里的长注释 —— `mcp_call_logs` 的外键
+    # 会给 `mcp_capabilities` 加 S 锁，随后 last_called_at 的 UPDATE 要 X 锁，
+    # 并发打同一个 capability 时双方都持 S 都等 X，形成锁升级死锁。
+    # 先 flush 拿到 X 锁，子行需要的 S 就被覆盖了。
+    cap.last_called_at = now
+    db.flush()
+
     call_log = MCPCallLog(
         id=str(uuid.uuid4()),
         mcp_server_id=server.id,
@@ -721,9 +730,22 @@ def invoke_capability(
         called_at=now,
     )
     db.add(call_log)
-    cap.last_called_at = now
-    db.commit()
-    db.refresh(call_log)
+    # 与 mcp_authorizations 那条路径同规：**遥测写失败不能把一次已经成功的调用
+    # 变成失败**。上面 manager.call_tool 已经返回，response 在手；这里再抛异常，
+    # 用户看到的是「调用失败」而实际上工具跑完了。
+    #
+    # 这条路径此前没有兜底 —— 死锁会一路冒到调用方。锁顺序改好之后预期不再触发，
+    # 但并发写这张表的路径不止一条，保留守卫。
+    try:
+        db.commit()
+        db.refresh(call_log)
+    except OperationalError as oe:
+        db.rollback()
+        logger.warning(
+            "MCP telemetry write failed for cap=%s (call already succeeded, "
+            "returning result regardless): %s",
+            cap.capability_name, oe,
+        )
 
     return call_log, response
 

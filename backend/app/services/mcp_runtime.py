@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.agent.mcp.client import MCPServerConnection
@@ -1393,6 +1394,23 @@ def record_health_probe(
     on the next read.
     """
     now = datetime.utcnow()
+    server.health_status = result.status
+    server.last_checked_at = now
+    server.last_response_time = result.response_time_ms
+
+    # Land the mcp_servers UPDATE BEFORE the mcp_health_records INSERT, and
+    # keep that order. The health record carries an FK to `mcp_servers`, so
+    # inserting one takes a SHARED lock on the server row for the FK check;
+    # SQLAlchemy flushes INSERTs ahead of UPDATEs, which left this transaction
+    # locking S(server) → X(server). Two probes of the SAME server each took S,
+    # then each waited on the other before it could upgrade to X — a
+    # lock-upgrade deadlock (MySQL 1213), reachable from the connection-test
+    # endpoint, the external-connection probe, and the mcp_server_admin agent
+    # tool (the model can fire those in parallel). Taking X first leaves no
+    # cycle to form. Same fix as invoke_principal_via_mcp in
+    # services.mcp_authorizations.
+    db.flush()
+
     record = MCPHealthRecord(
         id=str(uuid.uuid4()),
         server_id=server.id,
@@ -1403,9 +1421,19 @@ def record_health_probe(
         checked_at=now,
     )
     db.add(record)
-    server.health_status = result.status
-    server.last_checked_at = now
-    server.last_response_time = result.response_time_ms
-    db.commit()
-    db.refresh(record)
+    # Second line of defence — the ordering above is what prevents the deadlock;
+    # this catches contention this function does not own (lock-wait timeout,
+    # another writer). A probe result that cannot be persisted must not fail the
+    # probe itself: the caller already has `result` and the server row carries
+    # the same status, so the caller is told what it asked for either way.
+    try:
+        db.commit()
+        db.refresh(record)
+    except OperationalError as oe:
+        db.rollback()
+        logger.warning(
+            "health-probe write failed for server=%s (probe itself succeeded, "
+            "returning its result regardless): %s",
+            server.code, oe,
+        )
     return record

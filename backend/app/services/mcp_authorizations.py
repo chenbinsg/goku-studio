@@ -1131,6 +1131,28 @@ def invoke_principal_via_mcp(
     if result == "success":
         quota_info = consume_authorization_quota(db, authz, cap)
 
+    # ── 锁顺序：父行的 UPDATE 必须先于子行的 INSERT ──────────────────────────
+    #
+    # `mcp_call_logs.mcp_capability_id` 是外键，InnoDB 插子行时会给父行
+    # (`mcp_capabilities`) 加 **S 锁**；紧接着 `last_called_at` 的 UPDATE 又要把
+    # 同一行升级成 **X 锁**。两个并发请求打同一个 capability 时，双方都持 S、都等 X
+    # —— 谁也放不掉，MySQL 回滚其中一个（实测 2026-08-07，capability
+    # `query_statistics`，InnoDB 日志里两侧都是 `S locks rec but not gap` 已持有、
+    # `X locks rec but not gap waiting`）。
+    #
+    # 这不是两个资源交叉等待，是**同一行上的锁升级**。所以解法不是重排两个资源的
+    # 获取顺序，而是**一开始就拿够强的锁**：先 flush 掉父行的 UPDATE 拿到 X，
+    # 之后子行 INSERT 需要的 S 被已持有的 X 覆盖，升级这一步不复存在。
+    # 并发请求于是退化成毫秒级的行锁排队，而不是有一个被回滚。
+    #
+    # ⚠ 不能只调换下面两行赋值的顺序 —— SQLAlchemy 的 unit of work 默认把 INSERT
+    # 排在 UPDATE 之前，不显式 flush 的话写出来的顺序不算数。
+    #
+    # 此处 `cap` 已被 consume_authorization_quota 改脏（quota_used / rate_used），
+    # 连同 last_called_at 一起落成同一条 UPDATE。
+    cap.last_called_at = now
+    db.flush()
+
     call_log = MCPCallLog(
         id=str(uuid.uuid4()),
         mcp_server_id=server.id, mcp_server_name=server.name,
@@ -1156,7 +1178,6 @@ def invoke_principal_via_mcp(
         tenant_id=None, called_at=now,
     )
     db.add(call_log)
-    cap.last_called_at = now
     # Best-effort telemetry write. The MCP call ALREADY succeeded above
     # (response in hand). When the LLM fires parallel calls to the SAME
     # capability, the shared `mcp_capabilities.last_called_at` UPDATE can
