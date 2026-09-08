@@ -55,6 +55,11 @@ const { Header, Sider, Content } = AntLayout
 const { Text } = Typography
 const { useBreakpoint } = Grid
 
+// Background tabs kept these timers firing around the clock; gate every poll on
+// the tab actually being visible so a parked tab stops generating traffic.
+const pollWhenVisible = (fn: () => void, ms: number) =>
+  setInterval(() => { if (document.visibilityState === 'visible') fn() }, ms)
+
 const Layout: React.FC = () => {
   const { t } = useTranslation()
   const [collapsed] = useState(false)
@@ -117,13 +122,13 @@ const Layout: React.FC = () => {
 
   useEffect(() => {
     fetchNotifications()
-    const timer = setInterval(fetchNotifications, 30000)
+    const timer = pollWhenVisible(fetchNotifications, 30000)
     return () => clearInterval(timer)
   }, [fetchNotifications])
 
   useEffect(() => {
     fetchPendingApprovals()
-    const timer = setInterval(fetchPendingApprovals, 15000)
+    const timer = pollWhenVisible(fetchPendingApprovals, 15000)
     return () => clearInterval(timer)
   }, [fetchPendingApprovals])
 
@@ -138,7 +143,7 @@ const Layout: React.FC = () => {
 
   useEffect(() => {
     fetchNewEmailCount()
-    const timer = setInterval(fetchNewEmailCount, 30000)
+    const timer = pollWhenVisible(fetchNewEmailCount, 30000)
     return () => clearInterval(timer)
   }, [fetchNewEmailCount])
 

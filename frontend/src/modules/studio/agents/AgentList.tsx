@@ -2335,15 +2335,22 @@ function CapacityBar({ agentType, onClick }: { agentType: string; onClick?: () =
 
   useEffect(() => {
     let cancelled = false
-    agentInstanceApi.typeStatus(agentType)
-      .then(data => { if (!cancelled) setStatus(data) })
-      .catch(() => { /* best-effort */ })
-    // Refresh every 10 s while tile is mounted
-    const timer = setInterval(() => {
+    const load = () => {
       agentInstanceApi.typeStatus(agentType)
         .then(data => { if (!cancelled) setStatus(data) })
-        .catch(() => {})
-    }, 10_000)
+        // A failure here hides the whole bar (see the `return null` below), so it
+        // must not stay silent: a 500 on this endpoint is exactly how the bar
+        // disappeared for months without anyone noticing.
+        .catch(e => console.error('[CapacityBar] status poll failed', agentType, e))
+    }
+    load()
+    // One timer PER TILE: an agent list of 45 tiles was firing 45 requests every
+    // 10s for as long as the page stayed open — the single largest source of
+    // traffic in the whole platform. Gated on visibility and widened to 30s;
+    // the real fix is one shared /agent-instances/status call for the whole list.
+    const timer = setInterval(() => {
+      if (document.visibilityState === 'visible') load()
+    }, 30_000)
     return () => { cancelled = true; clearInterval(timer) }
   }, [agentType])
 

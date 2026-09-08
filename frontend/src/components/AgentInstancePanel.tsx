@@ -49,6 +49,9 @@ function fmtDuration(sec: number): string {
   return `${Math.floor(sec / 3600)}h ${Math.floor((sec % 3600) / 60)}m`
 }
 
+// 5s was one request per open tab per 5 seconds, around the clock.
+const POLL_INTERVAL_MS = 15_000
+
 const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClose }) => {
   const { t } = useTranslation()
   const [status, setStatus] = useState<AgentTypeStatus | null>(null)
@@ -64,8 +67,11 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
       const data = await agentInstanceApi.typeStatus(agentType)
       setStatus(data)
       if (scaleValue === null) setScaleValue(data.total_slots)
-    } catch {
-      // ignore
+    } catch (e) {
+      // Swallowing this silently is how a three-hour outage on
+      // /agent-instances/status went unnoticed: the panel just kept showing
+      // stale numbers while every poll returned a 500.
+      console.error('[AgentInstancePanel] status poll failed', e)
     }
   }
 
@@ -76,7 +82,12 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
     }
     setLoading(true)
     refresh().finally(() => setLoading(false))
-    timerRef.current = setInterval(refresh, 5_000)
+    // Poll only while the tab is actually being looked at — a backgrounded tab
+    // used to keep hitting this endpoint every 5s for as long as it stayed open.
+    const tick = () => {
+      if (document.visibilityState === 'visible') refresh()
+    }
+    timerRef.current = setInterval(tick, POLL_INTERVAL_MS)
     return () => {
       if (timerRef.current) clearInterval(timerRef.current)
     }

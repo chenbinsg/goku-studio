@@ -22,6 +22,26 @@ _RESERVED = frozenset(
     logging.makeLogRecord({}).__dict__.keys()
 ) | {"message", "asctime", "taskName", "color_message"}
 
+# Access-log paths that carry no information: the load balancer probes these
+# every few seconds forever and always gets a 200.
+_HEALTH_PATHS = ("/health", "/healthz", "/readyz", "/livez")
+
+
+class _DropHealthChecks(logging.Filter):
+    """Drop access-log records for load-balancer probes.
+
+    uvicorn.access formats as ``'%s - "%s %s HTTP/%s" %d'`` with the request path
+    as args[2], so the path is matched before the message is rendered.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 3:
+            path = args[2]
+            if isinstance(path, str) and path.split("?", 1)[0] in _HEALTH_PATHS:
+                return False
+        return True
+
 
 class JsonFormatter(logging.Formatter):
     """Render a LogRecord as a single-line JSON object."""
@@ -71,6 +91,8 @@ def setup_logging(level: str | None = None) -> None:
         lg.handlers = []
         lg.propagate = True
         lg.setLevel(log_level)
+
+    logging.getLogger("uvicorn.access").addFilter(_DropHealthChecks())
 
 
 # Configure JSON logging as an import side effect, so callers only need to
