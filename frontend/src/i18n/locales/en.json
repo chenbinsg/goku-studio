@@ -2851,5 +2851,8 @@
   "agent_edit_skills_missing": "{{count}} bound skills no longer exist",
   "table_card_collapse": "Show less",
   "table_card_expand": "Show all",
-  "table_card_index": "#"
+  "table_card_index": "#",
+  "workflow_monitor_tool_trace_label": "Tool calls",
+  "workflow_monitor_tool_args_label": "Arguments",
+  "workflow_monitor_tool_result_label": "Result"
 }

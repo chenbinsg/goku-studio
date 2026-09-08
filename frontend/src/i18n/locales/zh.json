@@ -2851,5 +2851,8 @@
   "agent_edit_skills_missing": "{{count}} 个绑定的 skill 已不存在",
   "table_card_collapse": "收起",
   "table_card_expand": "显示全部",
-  "table_card_index": "#"
+  "table_card_index": "#",
+  "workflow_monitor_tool_trace_label": "工具调用",
+  "workflow_monitor_tool_args_label": "入参",
+  "workflow_monitor_tool_result_label": "返回"
 }

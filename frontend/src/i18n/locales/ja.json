@@ -2851,5 +2851,8 @@
   "agent_edit_skills_missing": "バインド済みスキル {{count}} 件が存在しません",
   "table_card_collapse": "折りたたむ",
   "table_card_expand": "すべて表示",
-  "table_card_index": "#"
+  "table_card_index": "#",
+  "workflow_monitor_tool_trace_label": "ツール呼び出し",
+  "workflow_monitor_tool_args_label": "引数",
+  "workflow_monitor_tool_result_label": "戻り値"
 }

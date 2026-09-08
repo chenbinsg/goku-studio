@@ -9,6 +9,7 @@ import {
   Typography,
   Drawer,
   Alert,
+  Collapse,
 } from 'antd'
 import {
   StopOutlined,
@@ -33,6 +34,19 @@ import { workflowApi } from '@/api'
 import { useTranslation } from 'react-i18next'
 
 const { Title, Text } = Typography
+
+const TRACE_PRE: React.CSSProperties = {
+  background: '#fafafa',
+  border: '1px solid #f0f0f0',
+  padding: 8,
+  borderRadius: 4,
+  fontSize: 11,
+  maxHeight: 220,
+  overflow: 'auto',
+  margin: '4px 0 10px',
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+}
 
 const WorkflowMonitor: React.FC = () => {
   const { t } = useTranslation()
@@ -361,6 +375,52 @@ const WorkflowMonitor: React.FC = () => {
                 {selectedNode.execution.completed_at || '-'}
               </Descriptions.Item>
             </Descriptions>
+            {/* The tools this node's agent actually called. A task node runs a
+                full agent, and until now the monitor showed its prompt and its
+                answer with nothing in between — every tool call lived in memory
+                and died with the executor. Rendered above the raw output because
+                "what did it actually do" is the question this panel gets opened
+                for; the JSON stays below for everything else. */}
+            {Array.isArray(selectedNode.execution.output_data?.tool_trace)
+              && selectedNode.execution.output_data.tool_trace.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <Text strong>
+                  {t('workflow_monitor_tool_trace_label', { defaultValue: '工具调用' })}
+                  {` (${selectedNode.execution.output_data.tool_trace.length})`}
+                </Text>
+                <Collapse
+                  size="small"
+                  style={{ marginTop: 8 }}
+                  items={selectedNode.execution.output_data.tool_trace.map(
+                    (c: any, i: number) => ({
+                      key: String(i),
+                      label: (
+                        <span style={{ fontSize: 12 }}>
+                          <Tag color="blue" style={{ marginRight: 6 }}>{c.step ?? i + 1}</Tag>
+                          <code>{c.tool}</code>
+                        </span>
+                      ),
+                      children: (
+                        <div style={{ fontSize: 12 }}>
+                          <Text type="secondary">
+                            {t('workflow_monitor_tool_args_label', { defaultValue: '入参' })}
+                          </Text>
+                          <pre style={TRACE_PRE}>
+                            {typeof c.args === 'string'
+                              ? c.args
+                              : JSON.stringify(c.args, null, 2)}
+                          </pre>
+                          <Text type="secondary">
+                            {t('workflow_monitor_tool_result_label', { defaultValue: '返回' })}
+                          </Text>
+                          <pre style={TRACE_PRE}>{c.result}</pre>
+                        </div>
+                      ),
+                    }),
+                  )}
+                />
+              </div>
+            )}
             {selectedNode.execution.output_data && (
               <div style={{ marginTop: 16 }}>
                 <Text strong>{t('workflow_monitor_output_label')}</Text>
