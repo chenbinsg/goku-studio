@@ -20,6 +20,7 @@ import {
   Space,
   Spin,
   Switch,
+  Table,
   Tabs,
   Tag,
   Tooltip,
