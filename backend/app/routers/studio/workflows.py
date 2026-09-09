@@ -690,6 +690,82 @@ def list_executions(
     }
 
 
+@router.get("/executions/by-task/{task_id}")
+def get_executions_for_task(
+    task_id: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(auth.get_current_user),
+):
+    """The workflow runs a task launched, newest first, with their node states.
+
+    Declared before /{workflow_id}/executions/{execution_id} so "executions" is
+    not swallowed as a workflow id.
+
+    The link is `variables._task_id`, stamped by run_workflow when it creates the
+    execution. There is no column for it: run_dag is synchronous inside the tool
+    call, so the tool result that carries execution_id is only recorded once the
+    workflow has already finished — exactly the window the task page needs to
+    show something.
+    """
+    E = models.WorkflowExecution
+    # Match on the JSON key rather than loading every execution's `variables`,
+    # which holds the whole DAG output and can be megabytes per row.
+    rows = (
+        db.query(E.id, E.workflow_id, E.status, E.resume_from_layer,
+                 E.error_message, E.started_at, E.completed_at)
+        .filter(func.json_unquote(func.json_extract(E.variables, "$._task_id")) == task_id)
+        .all()
+    )
+    rows = sorted(rows, key=lambda r: (r.started_at is None, r.started_at or datetime.min),
+                  reverse=True)
+    if not rows:
+        return {"items": []}
+
+    names = dict(
+        db.query(models.Workflow.id, models.Workflow.name)
+        .filter(models.Workflow.id.in_([r.workflow_id for r in rows]))
+        .all()
+    )
+    NE = models.WorkflowNodeExecution
+    node_rows = db.query(NE).filter(NE.execution_id.in_([r.id for r in rows])).all()
+    by_exec: dict[str, list] = {}
+    for ne in node_rows:
+        by_exec.setdefault(ne.execution_id, []).append(ne)
+
+    items = []
+    for r in rows:
+        nodes = by_exec.get(r.id, [])
+        nodes.sort(key=lambda ne: (
+            ne.layer_index is None, ne.layer_index or 0,
+            ne.started_at is None, ne.started_at or datetime.min,
+        ))
+        items.append({
+            "id": r.id,
+            "workflow_id": r.workflow_id,
+            "workflow_name": names.get(r.workflow_id),
+            "status": r.status,
+            "resume_from_layer": r.resume_from_layer,
+            "error_message": r.error_message,
+            "started_at": r.started_at,
+            "completed_at": r.completed_at,
+            "node_executions": [
+                {
+                    "id": ne.id,
+                    "node_id": ne.node_id,
+                    "node_type": ne.node_type,
+                    "status": ne.status,
+                    "layer_index": ne.layer_index,
+                    "output_data": ne.output_data,
+                    "error_message": ne.error_message,
+                    "started_at": ne.started_at,
+                    "completed_at": ne.completed_at,
+                }
+                for ne in nodes
+            ],
+        })
+    return {"items": items}
+
+
 @router.get("/{workflow_id}/executions/{execution_id}")
 def get_execution_detail(
     workflow_id: str,

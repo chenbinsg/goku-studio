@@ -19,6 +19,7 @@ from sqlalchemy import text as sa_text
 from sqlalchemy.orm import Session
 
 from app import auth
+from app.services import change_audit
 from app.auth import get_current_user
 from app.db import get_db
 
@@ -1362,6 +1363,7 @@ def import_agent(
 def update_agent(
     agent_id: str,
     data: AgentDefinitionUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     user = Depends(get_current_user),
 ):
@@ -1373,6 +1375,11 @@ def update_agent(
         raise HTTPException(status_code=404, detail="Agent not found")
     if not _user_can_config(user, agent, db):
         raise HTTPException(status_code=403, detail="No edit permission for this agent")
+
+    # Snapshot before any field is touched: the audit row is built by diffing
+    # this against the post-commit state, so "who changed it" finally comes with
+    # "what they changed".
+    _before = change_audit.snapshot(agent, skip=change_audit.AGENT_SKIP_FIELDS)
 
     if data.name is not None:
         agent.name = data.name
@@ -1446,13 +1453,90 @@ def update_agent(
     db.commit()
     db.refresh(agent)
     _write_agent_seed(agent)
-    auth.log_audit_action(db, user.id, "update_agent", "agent", agent.id, {"name": agent.name})
+
+    changes = change_audit.diff(
+        _before, change_audit.snapshot(agent, skip=change_audit.AGENT_SKIP_FIELDS)
+    )
+    # A save that changed nothing writes nothing: most of the 889 historical
+    # update_agent rows are indistinguishable no-ops, which is what made the
+    # trail unusable.
+    if changes:
+        auth.log_audit_action(
+            db, user.id, "update_agent", "agent", agent.id,
+            {"name": agent.name, "changes": changes},
+            # Without the request the helper cannot reach IP / user-agent /
+            # trace_id, which is why every one of the 1,825 historical agent
+            # rows has a NULL ip_address.
+            request=request,
+        )
     return _serialize(agent)
+
+
+@router.get("/{agent_id}/changes")
+def list_agent_changes(
+    agent_id: str,
+    offset: int = 0,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    """Change timeline for one agent.
+
+    The global /audit/logs endpoint can only filter by resource_type, so reading
+    one agent's history meant pulling every agent row and filtering client-side
+    — 1,825 rows across 19 pages to answer a question about a single agent.
+    """
+    from sqlalchemy import or_
+
+    from app.models import AgentDefinition, AuditLog, User
+
+    agent = db.query(AgentDefinition).filter(AgentDefinition.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    if not _user_can_config(user, agent, db):
+        raise HTTPException(status_code=403, detail="No permission to view this agent's history")
+
+    limit = max(1, min(limit, 200))
+    q = db.query(AuditLog).filter(
+        AuditLog.resource_type == "agent",
+        AuditLog.resource_id == agent_id,
+    )
+    # Tenant scoping mirrors the agent itself. Rows predating tenant stamping
+    # have a NULL tenant_id and stay visible, otherwise the history of an agent
+    # created before that column existed would silently read as empty.
+    tenant_id = getattr(user, "tenant_id", None)
+    if tenant_id and not getattr(user, "is_superuser", False):
+        q = q.filter(or_(AuditLog.tenant_id == tenant_id, AuditLog.tenant_id.is_(None)))
+
+    total = q.count()
+    rows = q.order_by(AuditLog.created_at.desc()).offset(offset).limit(limit).all()
+
+    names: dict[str, str] = {}
+    user_ids = {r.user_id for r in rows if r.user_id}
+    if user_ids:
+        names = {u.id: u.username for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+
+    return {
+        "total": total,
+        "items": [
+            {
+                "id": r.id,
+                "action": r.action,
+                "user_id": r.user_id,
+                "username": names.get(r.user_id) if r.user_id else None,
+                "details": r.details,
+                "ip_address": r.ip_address,
+                "created_at": r.created_at,
+            }
+            for r in rows
+        ],
+    }
 
 
 @router.delete("/{agent_id}")
 def delete_agent(
     agent_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user = Depends(get_current_user),
 ):
@@ -1464,7 +1548,15 @@ def delete_agent(
         raise HTTPException(status_code=403, detail="No delete permission for this agent")
     agent_name = agent.name
     agent_slug = getattr(agent, "slug", None)
-    auth.log_audit_action(db, user.id, "delete_agent", "agent", agent.id, {"name": agent_name})
+    # Hard delete: once the row is gone the configuration is unrecoverable, so
+    # the audit row carries the full snapshot rather than just a name — the 176
+    # agents deleted so far left nothing behind but their names.
+    auth.log_audit_action(
+        db, user.id, "delete_agent", "agent", agent.id,
+        {"name": agent_name,
+         "snapshot": change_audit.snapshot(agent, skip=change_audit.AGENT_SKIP_FIELDS)},
+        request=request,
+    )
     # Revoke the agent's MCP capability authorizations too — they're keyed by
     # (principal_type='agent', principal_id) with no FK to the agent, so a plain
     # delete leaves them orphaned (and a new agent reusing the id would inherit

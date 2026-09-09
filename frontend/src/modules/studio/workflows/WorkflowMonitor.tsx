@@ -14,6 +14,7 @@ import {
 import {
   StopOutlined,
   ReloadOutlined,
+  SyncOutlined,
   ArrowLeftOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
@@ -31,6 +32,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { workflowApi } from '@/api'
+import { fmtUtc, parseUtc } from '@/utils/time'
 import { useTranslation } from 'react-i18next'
 
 const { Title, Text } = Typography
@@ -58,6 +60,7 @@ const WorkflowMonitor: React.FC = () => {
     success: { color: '#52c41a', icon: <CheckCircleOutlined />, label: t('workflow_monitor_status_success') },
     failed: { color: '#ff4d4f', icon: <CloseCircleOutlined />, label: t('workflow_monitor_status_failed') },
     skipped: { color: '#bfbfbf', icon: <ClockCircleOutlined />, label: t('workflow_monitor_status_skipped') },
+    cancelled: { color: '#faad14', icon: <StopOutlined />, label: t('workflow_monitor_status_cancelled') },
   }
 
   const { id: workflowId, execId } = useParams<{ id: string; execId: string }>()
@@ -67,10 +70,25 @@ const WorkflowMonitor: React.FC = () => {
   const [loading, setLoading] = useState(true)
   const [nodeStatuses, setNodeStatuses] = useState<Record<string, string>>({})
   const [selectedNode, setSelectedNode] = useState<any>(null)
+  // Tool traces arriving over SSE while a node is still running, by node_id.
+  // The node's row carries the same trace, but refetching the whole execution
+  // on every tool call would pull every finished node's output back with it.
+  const [liveTraces, setLiveTraces] = useState<Record<string, any[]>>({})
+  // Turn counter from the same event. A node whose job is to generate a report
+  // calls one tool at the very end, so the trace alone cannot tell it apart
+  // from a hung one — this is what says it is alive.
+  const [liveTurns, setLiveTurns] = useState<Record<string, { turn: number; max: number }>>({})
+  // Ticks once a second so the running node's elapsed time moves.
+  const [tick, setTick] = useState(0)
+  const [refreshing, setRefreshing] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [nodes, setNodes, onNodesChange] = useNodesState<any>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>([])
   const sseRef = useRef<EventSource | null>(null)
+  // Bumped by a retry. The stream closes itself when the execution reaches a
+  // terminal state, and a retry now resumes the same execId — so nothing in
+  // the effect's deps would change and the reopened run would stream nowhere.
+  const [streamKey, setStreamKey] = useState(0)
 
   const dagToReactFlow = useCallback((dag: any, statusMap: Record<string, string>, nodeExecutions: any[] = []) => {
     const dagNodes: any[] = (dag?.nodes || []).filter((node: any) => node.id !== 'send_email')
@@ -252,6 +270,32 @@ const WorkflowMonitor: React.FC = () => {
     es.onmessage = (e) => {
       try {
         const event = JSON.parse(e.data)
+        if (event.type === 'node_trace') {
+          // A tool call finished inside a node that is still running.
+          setLiveTraces((prev) => ({
+            ...prev,
+            [event.node_id]: event.output?.tool_trace || [],
+          }))
+          if (event.output?.turn) {
+            setLiveTurns((prev) => ({
+              ...prev,
+              [event.node_id]: { turn: event.output.turn, max: event.output.max_turns },
+            }))
+          }
+        }
+        if (event.type === 'node_completed' || event.type === 'node_failed') {
+          // The node's own row now holds the complete trace — stop shadowing it.
+          setLiveTraces((prev) => {
+            const next = { ...prev }
+            delete next[event.node_id]
+            return next
+          })
+          setLiveTurns((prev) => {
+            const next = { ...prev }
+            delete next[event.node_id]
+            return next
+          })
+        }
         if (
           event.type === 'node_started' ||
           event.type === 'node_completed' ||
@@ -285,7 +329,16 @@ const WorkflowMonitor: React.FC = () => {
       es.close()
       sseRef.current = null
     }
-  }, [workflowId, execId, loadExecution])
+  }, [workflowId, execId, streamKey, loadExecution])
+
+  const handleRefresh = async () => {
+    setRefreshing(true)
+    try {
+      await Promise.all([loadExecution(), loadWorkflow()])
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const handleCancel = async () => {
     if (!workflowId || !execId) return
@@ -300,22 +353,64 @@ const WorkflowMonitor: React.FC = () => {
   const handleRetry = async () => {
     if (!workflowId || !execId) return
     try {
-      const result = await workflowApi.retryFromLayer(
+      await workflowApi.retryFromLayer(
         workflowId,
         execId,
         execution?.resume_from_layer || 0,
       )
-      navigate(`/workflows/${workflowId}/executions/${result.new_execution_id}`)
+      // The retry resumes THIS execution now, so there is nowhere to navigate:
+      // the finished nodes stay on screen and only the re-run layers change.
+      await loadExecution()
+      setStreamKey((k) => k + 1)
     } catch (e) {
       console.error('Failed to retry execution', e)
     }
   }
 
   const handleNodeClick = (_: any, node: any) => {
-    const ne = execution?.node_executions?.find((n: any) => n.node_id === node.id)
-    setSelectedNode({ ...node, execution: ne })
+    setSelectedNode(node)
     setDrawerOpen(true)
   }
+
+  // Looked up on every render rather than captured on click: the drawer used to
+  // hold whatever the node looked like at the moment it was opened, so a node
+  // watched through its whole run never changed on screen.
+  const selectedExecution = selectedNode
+    ? execution?.node_executions?.find((n: any) => n.node_id === selectedNode.id)
+    : null
+  const selectedExecutionStatus = selectedExecution?.status
+  // While a node runs, the freshest trace is the one coming over SSE; once it
+  // ends its own row is complete and liveTraces has been cleared for it.
+  const selectedTrace: any[] = selectedNode
+    ? (liveTraces[selectedNode.id] || selectedExecution?.output_data?.tool_trace || [])
+    : []
+  const selectedTurn = selectedNode
+    ? (liveTurns[selectedNode.id]
+       || (selectedExecution?.output_data?.turn
+           ? { turn: selectedExecution.output_data.turn,
+               max: selectedExecution.output_data.max_turns }
+           : null))
+    : null
+
+  // Ticks only while a running node's panel is open, so a finished execution
+  // is not re-rendering once a second for nothing.
+  useEffect(() => {
+    if (!drawerOpen || selectedExecutionStatus !== 'running') return
+    const h = window.setInterval(() => setTick((n) => n + 1), 1000)
+    return () => window.clearInterval(h)
+  }, [drawerOpen, selectedExecutionStatus])
+
+  // mm:ss since the node started, recomputed on each tick.
+  const runningFor = ((_tick: number) => {
+    if (!selectedExecution?.started_at) return null
+    const secs = Math.max(0, Math.floor(
+      (Date.now() - parseUtc(selectedExecution.started_at).valueOf()) / 1000))
+    const h = Math.floor(secs / 3600)
+    const m = Math.floor((secs % 3600) / 60)
+    const sec = secs % 60
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`
+  })(tick)
 
   const statusTag = () => {
     const s = execution?.status || 'running'
@@ -378,7 +473,14 @@ const WorkflowMonitor: React.FC = () => {
         {statusTag()}
         <div style={{ flex: 1 }} />
         <Space>
-          {execution?.status === 'failed' && (
+          <Button
+            icon={<SyncOutlined spin={refreshing} />}
+            onClick={handleRefresh}
+            loading={refreshing}
+          >
+            {t('common_refresh')}
+          </Button>
+          {['failed', 'cancelled'].includes(execution?.status) && (
             <Button icon={<ReloadOutlined />} onClick={handleRetry} type="primary">
               {t('workflow_monitor_retry_button', { layer: execution?.resume_from_layer ?? 0 })}
             </Button>
@@ -426,28 +528,28 @@ const WorkflowMonitor: React.FC = () => {
         onClose={() => setDrawerOpen(false)}
         width={480}
       >
-        {selectedNode?.execution ? (
+        {selectedExecution ? (
           <>
             <Descriptions column={1} size="small" bordered>
               <Descriptions.Item label={t('workflow_monitor_status_label')}>
                 <Tag
                   color={
-                    STATUS_CONFIG[selectedNode.execution.status]?.color ||
+                    STATUS_CONFIG[selectedExecution.status]?.color ||
                     '#d9d9d9'
                   }
                 >
-                  {STATUS_CONFIG[selectedNode.execution.status]?.label ||
-                    selectedNode.execution.status}
+                  {STATUS_CONFIG[selectedExecution.status]?.label ||
+                    selectedExecution.status}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label={t('workflow_monitor_layer_label')}>
-                Layer {selectedNode.execution.layer_index ?? '-'}
+                Layer {selectedExecution.layer_index ?? '-'}
               </Descriptions.Item>
               <Descriptions.Item label={t('workflow_monitor_started_at_label')}>
-                {selectedNode.execution.started_at || '-'}
+                {fmtUtc(selectedExecution.started_at, 'YYYY-MM-DD HH:mm:ss', '-')}
               </Descriptions.Item>
               <Descriptions.Item label={t('workflow_monitor_completed_at_label')}>
-                {selectedNode.execution.completed_at || '-'}
+                {fmtUtc(selectedExecution.completed_at, 'YYYY-MM-DD HH:mm:ss', '-')}
               </Descriptions.Item>
             </Descriptions>
             {/* The tools this node's agent actually called. A task node runs a
@@ -456,17 +558,39 @@ const WorkflowMonitor: React.FC = () => {
                 and died with the executor. Rendered above the raw output because
                 "what did it actually do" is the question this panel gets opened
                 for; the JSON stays below for everything else. */}
-            {Array.isArray(selectedNode.execution.output_data?.tool_trace)
-              && selectedNode.execution.output_data.tool_trace.length > 0 && (
+            {selectedExecution.status === 'running' && (
+              <Alert
+                type="info"
+                showIcon
+                icon={<LoadingOutlined />}
+                style={{ marginTop: 16 }}
+                message={
+                  <span style={{ fontSize: 13 }}>
+                    {STATUS_CONFIG.running.label}
+                    {runningFor && <> · {t('workflow_monitor_running_for', { defaultValue: '已运行' })} {runningFor}</>}
+                    {selectedTurn && <> · {t('workflow_monitor_turn', { defaultValue: '第 {{n}} 轮', n: selectedTurn.turn })}
+                      {selectedTurn.max ? `/${selectedTurn.max}` : ''}</>}
+                  </span>
+                }
+                description={
+                  selectedTrace.length === 0 ? (
+                    <span style={{ fontSize: 12 }}>
+                      {t('workflow_monitor_no_tools_yet', { defaultValue: '这一步还没有调用工具' })}
+                    </span>
+                  ) : undefined
+                }
+              />
+            )}
+            {selectedTrace.length > 0 && (
               <div style={{ marginTop: 16 }}>
                 <Text strong>
                   {t('workflow_monitor_tool_trace_label', { defaultValue: '工具调用' })}
-                  {` (${selectedNode.execution.output_data.tool_trace.length})`}
+                  {` (${selectedTrace.length})`}
                 </Text>
                 <Collapse
                   size="small"
                   style={{ marginTop: 8 }}
-                  items={selectedNode.execution.output_data.tool_trace.map(
+                  items={selectedTrace.map(
                     (c: any, i: number) => ({
                       key: String(i),
                       label: (
@@ -496,7 +620,8 @@ const WorkflowMonitor: React.FC = () => {
                 />
               </div>
             )}
-            {selectedNode.execution.output_data && (
+            {selectedExecution.output_data
+              && !selectedExecution.output_data.partial && (
               <div style={{ marginTop: 16 }}>
                 <Text strong>{t('workflow_monitor_output_label')}</Text>
                 <pre
@@ -510,13 +635,13 @@ const WorkflowMonitor: React.FC = () => {
                     marginTop: 8,
                   }}
                 >
-                  {JSON.stringify(selectedNode.execution.output_data, null, 2)}
+                  {JSON.stringify(selectedExecution.output_data, null, 2)}
                 </pre>
               </div>
             )}
-            {selectedNode.execution.error_message && (
+            {selectedExecution.error_message && (
               <Alert
-                message={selectedNode.execution.error_message}
+                message={selectedExecution.error_message}
                 type="error"
                 showIcon
                 style={{ marginTop: 16 }}

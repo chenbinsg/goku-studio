@@ -2102,6 +2102,11 @@ const AgentList: React.FC = () => {
                   </div>
                 ),
               },
+              {
+                key: 'history',
+                label: t('agent_edit_tab_history'),
+                children: <AgentChangeLog agentId={editingId} />,
+              },
             ]}
           />
         </Form>
@@ -2325,6 +2330,91 @@ const AgentList: React.FC = () => {
           </div>
         )}
       </Modal>
+    </div>
+  )
+}
+
+// 变更记录：谁在什么时候把这个 agent 的哪个字段改成了什么。
+// 只在标签页打开时取一次数据 —— 这是一份历史，不是实时状态，没有轮询的理由。
+function AgentChangeLog({ agentId }: { agentId: string | null }) {
+  const { t } = useTranslation()
+  const [rows, setRows] = useState<any[]>([])
+  const [total, setTotal] = useState(0)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!agentId) { setRows([]); setTotal(0); return }
+    let cancelled = false
+    setLoading(true)
+    // ApiClient.get returns the unwrapped body, not an AxiosResponse — there is
+    // no .data to reach through.
+    api.get<{ total: number; items: any[] }>(`/agents/${agentId}/changes`, { params: { limit: 50 } })
+      .then(res => {
+        if (cancelled) return
+        setRows(res?.items || [])
+        setTotal(res?.total || 0)
+      })
+      .catch(e => { if (!cancelled) message.error(t('agent_history_load_failed')) ; console.error('[AgentChangeLog]', e) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [agentId])
+
+  const renderChanges = (details: any) => {
+    if (details?.snapshot) return <Text type="secondary">{t('agent_history_deleted')}</Text>
+    const changes = details?.changes
+    // Rows written before field tracking existed carry only a name; saying so
+    // is more useful than rendering an empty cell that looks like a bug.
+    if (!changes || !Object.keys(changes).length) {
+      return <Text type="secondary" style={{ fontSize: 12 }}>{t('agent_history_no_detail')}</Text>
+    }
+    const fmt = (v: any) => {
+      if (v === null || v === undefined) return '—'
+      if (typeof v === 'object') {
+        // Long text is stored as a length summary, not the text itself.
+        if (v._truncated) return `${v.head}… (${v.length})`
+        return JSON.stringify(v)
+      }
+      return String(v)
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {Object.entries(changes).map(([field, v]: [string, any]) => (
+          <div key={field} style={{ fontSize: 12, lineHeight: 1.5 }}>
+            <Tag style={{ marginInlineEnd: 6 }}>{field}</Tag>
+            <Text delete type="secondary" style={{ wordBreak: 'break-all' }}>{fmt(v?.before)}</Text>
+            <Text type="secondary"> → </Text>
+            <Text strong style={{ wordBreak: 'break-all' }}>{fmt(v?.after)}</Text>
+          </div>
+        ))}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ paddingTop: 8 }}>
+      <Table
+        size="small"
+        loading={loading}
+        rowKey="id"
+        dataSource={rows}
+        pagination={false}
+        locale={{ emptyText: t('agent_history_empty') }}
+        columns={[
+          { title: t('agent_history_col_time'), dataIndex: 'created_at', width: 150,
+            render: (v: string) => <span style={{ fontSize: 12 }}>{new Date(v).toLocaleString()}</span> },
+          { title: t('agent_history_col_user'), dataIndex: 'username', width: 110,
+            render: (v: string | null) => v || '—' },
+          { title: t('agent_history_col_action'), dataIndex: 'action', width: 170,
+            render: (v: string) => <Tag color="blue">{v}</Tag> },
+          { title: t('agent_history_col_changes'), key: 'changes',
+            render: (_: any, r: any) => renderChanges(r.details) },
+        ]}
+      />
+      {total > rows.length && (
+        <Text type="secondary" style={{ fontSize: 12 }}>
+          {t('agent_history_more', { count: total - rows.length })}
+        </Text>
+      )}
     </div>
   )
 }

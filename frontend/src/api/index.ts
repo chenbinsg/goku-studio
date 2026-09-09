@@ -429,6 +429,10 @@ export const workflowApi = {
   delete: (id: string) => api.delete<void>(`/workflows/${id}`),
   getExecution: (workflowId: string, executionId: string) =>
     api.get<any>(`/workflows/${workflowId}/executions/${executionId}`),
+  // The workflow runs a task launched — reachable while they are still running,
+  // which the tool's own result is not (run_dag is synchronous inside the call).
+  executionsByTask: (taskId: string) =>
+    api.get<{ items: any[] }>(`/workflows/executions/by-task/${taskId}`),
   listExecutions: (workflowId: string, page = 1, size = 20) =>
     api.get<{ items: any[]; total: number }>(`/workflows/${workflowId}/executions`, { params: { page, size } }),
   cancelExecution: (workflowId: string, executionId: string) =>
