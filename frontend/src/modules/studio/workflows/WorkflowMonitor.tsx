@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   Button,
@@ -26,8 +26,6 @@ import {
   Background,
   Controls,
   MiniMap,
-  useNodesState,
-  useEdgesState,
   MarkerType,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
@@ -85,8 +83,6 @@ const WorkflowMonitor: React.FC = () => {
   const [tick, setTick] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
-  const [nodes, setNodes, onNodesChange] = useNodesState<any>([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<any>([])
   const sseRef = useRef<AbortController | null>(null)
   // Bumped by a retry. The stream closes itself when the execution reaches a
   // terminal state, and a retry now resumes the same execId — so nothing in
@@ -270,13 +266,26 @@ const WorkflowMonitor: React.FC = () => {
     Promise.all([loadExecution(), loadWorkflow()]).finally(() => setLoading(false))
   }, [loadExecution, loadWorkflow])
 
-  useEffect(() => {
-    if (!workflow?.dag && !execution) return
+  // The graph is a pure function of the DAG and the node statuses, so it is
+  // derived here and handed to ReactFlow as controlled props. It used to live
+  // in useNodesState/useEdgesState and be re-synced from an effect — the same
+  // data in two places. Every status tick replaced all five node objects AND
+  // all four edge objects; ReactFlow rebuilt its store, and edges applied
+  // while the new nodes were not yet measured got dropped. One rebuild later
+  // they came back — unless the burst ended on a dropped one, and then
+  // nothing rebuilt again and the graph stayed edgeless for good. Controlled
+  // props cannot diverge: what this returns is what renders, every render.
+  const { rfNodes, rfEdges } = useMemo(() => {
     const dag = workflow?.dag || {}
-    const { rfNodes, rfEdges } = dagToReactFlow(dag, nodeStatuses, execution?.node_executions || [])
-    setNodes(rfNodes)
-    setEdges(rfEdges)
-  }, [workflow, execution, nodeStatuses, setNodes, setEdges, dagToReactFlow])
+    const built = dagToReactFlow(dag, nodeStatuses, execution?.node_executions || [])
+    return {
+      // Selection is a ReactFlow node change, and with no onNodesChange there
+      // is nowhere to apply one — so carry it on the node itself. This is what
+      // rings the node whose detail drawer is open.
+      rfNodes: built.rfNodes.map((n: any) => ({ ...n, selected: n.id === selectedNode?.id })),
+      rfEdges: built.rfEdges,
+    }
+  }, [workflow, execution, nodeStatuses, selectedNode, dagToReactFlow])
 
   useEffect(() => {
     if (!workflowId || !execId) return
@@ -567,10 +576,8 @@ const WorkflowMonitor: React.FC = () => {
       {/* DAG visualization */}
       <div style={{ flex: 1, position: 'relative' }}>
         <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
+          nodes={rfNodes}
+          edges={rfEdges}
           onNodeClick={handleNodeClick}
           fitView
           nodesDraggable={false}
