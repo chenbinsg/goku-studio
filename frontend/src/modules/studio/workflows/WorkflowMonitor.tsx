@@ -34,6 +34,7 @@ import '@xyflow/react/dist/style.css'
 import { workflowApi } from '@/api'
 import { fmtUtc, parseUtc } from '@/utils/time'
 import { useTranslation } from 'react-i18next'
+import { useAuthStore } from '../../../stores/auth'
 
 const { Title, Text } = Typography
 
@@ -61,6 +62,8 @@ const WorkflowMonitor: React.FC = () => {
     failed: { color: '#ff4d4f', icon: <CloseCircleOutlined />, label: t('workflow_monitor_status_failed') },
     skipped: { color: '#bfbfbf', icon: <ClockCircleOutlined />, label: t('workflow_monitor_status_skipped') },
     cancelled: { color: '#faad14', icon: <StopOutlined />, label: t('workflow_monitor_status_cancelled') },
+    // No label: a structural node has no state worth reporting.
+    structural: { color: '#d9d9d9', icon: <ClockCircleOutlined />, label: '' },
   }
 
   const { id: workflowId, execId } = useParams<{ id: string; execId: string }>()
@@ -84,7 +87,7 @@ const WorkflowMonitor: React.FC = () => {
   const [drawerOpen, setDrawerOpen] = useState(false)
   const [nodes, setNodes, onNodesChange] = useNodesState<any>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<any>([])
-  const sseRef = useRef<EventSource | null>(null)
+  const sseRef = useRef<AbortController | null>(null)
   // Bumped by a retry. The stream closes itself when the execution reaches a
   // terminal state, and a retry now resumes the same execId — so nothing in
   // the effect's deps would change and the reopened run would stream nowhere.
@@ -175,16 +178,28 @@ const WorkflowMonitor: React.FC = () => {
     const centerY = 220
     layers.forEach((layer, layerIndex) => {
       const startY = centerY - ((layer.length - 1) * rowGap) / 2
+      // Shift the whole layer down as a unit. Clamping each row on its own
+      // collapsed the ones above the top margin onto the same y: a layer of six
+      // put rows 0 and 1 both at 40, so the first node sat exactly underneath
+      // the second and the graph looked like it had lost a node.
+      const shift = Math.max(0, 40 - startY)
       layer.forEach((id, rowIndex) => {
         positioned.set(id, {
           x: minX + layerIndex * columnGap,
-          y: Math.max(40, startY + rowIndex * rowGap),
+          y: startY + rowIndex * rowGap + shift,
         })
       })
     })
 
+    // start / end / join return immediately in the engine and never get a
+    // WorkflowNodeExecution row, so statusMap has nothing for them and they
+    // rendered as "pending" — a finished run showed its start node still
+    // waiting. They have no execution to report; say so instead of guessing.
+    const STRUCTURAL = new Set(['start', 'end', 'join'])
+
     const rfNodes = dagNodes.map((node: any, i: number) => {
-      const status = statusMap[node.id] || 'pending'
+      const structural = STRUCTURAL.has(node.type)
+      const status = statusMap[node.id] || (structural ? 'structural' : 'pending')
       const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.pending
       return {
         id: node.id,
@@ -196,7 +211,9 @@ const WorkflowMonitor: React.FC = () => {
                 {cfg.icon}{' '}
                 {node.data?.label || node.label || node.id}
               </div>
-              <div style={{ fontSize: 11, color: cfg.color }}>{cfg.label}</div>
+              {cfg.label ? (
+                <div style={{ fontSize: 11, color: cfg.color }}>{cfg.label}</div>
+              ) : null}
             </div>
           ),
         },
@@ -264,12 +281,21 @@ const WorkflowMonitor: React.FC = () => {
   useEffect(() => {
     if (!workflowId || !execId) return
     const url = `/api/v1/workflows/${workflowId}/executions/${execId}/events`
-    const es = new EventSource(url)
-    sseRef.current = es
 
-    es.onmessage = (e) => {
+    // Deliberately NOT EventSource: the browser API cannot send an
+    // Authorization header, and this endpoint requires a Bearer token — every
+    // connection came back 401 and onerror closed it without a word, so the
+    // monitor looked live while showing nothing but what the last manual
+    // refresh had fetched. fetch() can carry the header; the cost is parsing
+    // the SSE framing here.
+    const ac = new AbortController()
+    sseRef.current = ac
+    let closed = false
+    const close = () => { closed = true; ac.abort() }
+
+    const handle = (raw: string) => {
       try {
-        const event = JSON.parse(e.data)
+        const event = JSON.parse(raw)
         if (event.type === 'node_trace') {
           // A tool call finished inside a node that is still running.
           setLiveTraces((prev) => ({
@@ -316,17 +342,53 @@ const WorkflowMonitor: React.FC = () => {
           ['execution_completed', 'execution_failed', 'execution_cancelled'].includes(event.type)
         ) {
           loadExecution()
-          es.close()
+          close()
         }
       } catch (_e) { /* ignore parse errors from SSE stream */ }
     }
 
-    es.onerror = () => {
-      es.close()
-    }
+    ;(async () => {
+      try {
+        const token = useAuthStore.getState().token
+        const resp = await fetch(url, {
+          headers: {
+            Accept: 'text/event-stream',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          signal: ac.signal,
+        })
+        if (!resp.ok || !resp.body) {
+          console.error('workflow event stream failed', resp.status)
+          return
+        }
+        const reader = resp.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        while (!closed) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          // SSE frames are separated by a blank line; a frame may carry several
+          // `data:` lines, which concatenate.
+          let sep: number
+          while ((sep = buffer.indexOf('\n\n')) !== -1) {
+            const frame = buffer.slice(0, sep)
+            buffer = buffer.slice(sep + 2)
+            const payload = frame
+              .split('\n')
+              .filter((line) => line.startsWith('data:'))
+              .map((line) => line.slice(5).trimStart())
+              .join('')
+            if (payload) handle(payload)
+          }
+        }
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') console.error('workflow event stream error', e)
+      }
+    })()
 
     return () => {
-      es.close()
+      close()
       sseRef.current = null
     }
   }, [workflowId, execId, streamKey, loadExecution])
