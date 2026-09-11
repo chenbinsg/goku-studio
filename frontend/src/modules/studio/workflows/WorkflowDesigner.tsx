@@ -104,6 +104,9 @@ interface NodeData {
   body?: string
   output_variable?: string
   http_timeout?: number
+  // shared by every type that publishes an output_variable: `def process(result)`,
+  // run sandboxed on the node's result so the next node gets only what it needs
+  result_script?: string
   // execution status overlay (injected at runtime, not persisted)
   _execStatus?: string
   [key: string]: unknown
@@ -506,15 +509,18 @@ const coerceConditionValue = (raw: unknown): unknown => {
 // only these (plus label), so a node never absorbs unrelated defaults from the shared
 // form — a tool_call node used to come back with method/url/prompt merged into its config.
 const TYPE_FIELDS: Record<string, string[]> = {
-  task:         ['prompt', 'tools', 'model', 'timeout'],
+  // `result_script` is offered on every type that publishes an output_variable.
+  // `code` is excluded on purpose: its whole body is already a sandboxed script,
+  // so a second one would add a hop and no capability.
+  task:         ['prompt', 'tools', 'model', 'timeout', 'result_script'],
   condition:    ['variable', 'operator', 'value', 'true_branch', 'false_branch', 'description'],
   parallel:     ['description'],
   join:         [],
   approval:     ['description', 'risk_level', 'timeout_seconds'],
   wait:         ['seconds'],
   code:         ['code', 'output_variable', 'timeout'],
-  http_request: ['method', 'url', 'headers', 'body', 'output_variable', 'http_timeout'],
-  tool_call:    ['tool', 'params', 'timeout', 'ignore_error', 'output_variable'],
+  http_request: ['method', 'url', 'headers', 'body', 'output_variable', 'http_timeout', 'result_script'],
+  tool_call:    ['tool', 'params', 'timeout', 'ignore_error', 'output_variable', 'result_script'],
 }
 
 // ─── Inner designer (must be inside ReactFlowProvider) ───────────────────────
@@ -731,6 +737,10 @@ const WorkflowDesignerInner: React.FC = () => {
         body:            d.body             || '',
         output_variable: d.output_variable  || '',
         http_timeout:    d.http_timeout     ?? 30,
+        // Must be seeded here: handleUpdateNode writes back whatever the form
+        // holds, so a field left unpopulated would blank an existing script the
+        // first time the drawer is opened for any other edit.
+        result_script:   d.result_script    || '',
       })
       setDrawerOpen(true)
     },
@@ -783,8 +793,19 @@ const WorkflowDesignerInner: React.FC = () => {
       restoreHiddenDagNodes(dag, loadedDagNodes.current)
       const payload = { name: workflowName, description: workflowDesc, dag, triggers: workflowTriggers, variables: workflowVariables, agent_id: workflowAgentId ?? null }
       if (savedWorkflowId.current) {
-        await workflowApi.update(savedWorkflowId.current, payload)
+        const saved: any = await workflowApi.update(savedWorkflowId.current, payload)
         message.success(t('workflow_designer_save_success'))
+        // Agents that will run this workflow but lack an MCP authorization it
+        // needs — surfaced at save instead of at the first failed run.
+        for (const w of saved?.permission_warnings || []) {
+          const tools = (w.missing || []).map((m: any) => m.tool).join('、')
+          message.warning(
+            w.scheduled_but_not_configured
+              ? t('workflow_designer_perm_warning_scheduled', { agent: w.agent_name })
+              : t('workflow_designer_perm_warning', { agent: w.agent_name, tools }),
+            8,
+          )
+        }
       } else {
         const res = await workflowApi.create(payload)
         savedWorkflowId.current = (res as any).workflow_id || null
@@ -852,6 +873,25 @@ const WorkflowDesignerInner: React.FC = () => {
   ]
 
   // ── Properties drawer form fields ───────────────────────────────────────────
+
+  // Offered by every node type that publishes an output_variable. Without it a
+  // node hands the next node its entire raw return — which is how one MCP
+  // capability's full CSV ended up in a downstream prompt twice. Same contract
+  // as an MCP capability's script, so an author who wrote one already knows it.
+  const resultScriptField = (
+    <Form.Item
+      label={t('wf_result_script_label')}
+      name="result_script"
+      extra={t('wf_result_script_extra')}
+    >
+      <Input.TextArea
+        rows={8}
+        placeholder={'def process(result):\n    return {"rate": result["output"]}'}
+        style={{ fontFamily: 'monospace', fontSize: 12 }}
+      />
+    </Form.Item>
+  )
+
   const renderFormFields = () => {
     const type = selectedNode?.type
     return (
@@ -884,6 +924,7 @@ const WorkflowDesignerInner: React.FC = () => {
             <Form.Item label={t('workflow_designer_timeout')} name="timeout">
               <InputNumber min={1} max={86400} style={{ width: '100%' }} />
             </Form.Item>
+            {resultScriptField}
           </>
         )}
 
@@ -1020,6 +1061,7 @@ const WorkflowDesignerInner: React.FC = () => {
             >
               <Switch />
             </Form.Item>
+            {resultScriptField}
           </>
         )}
 
@@ -1049,6 +1091,7 @@ const WorkflowDesignerInner: React.FC = () => {
             <Form.Item label={t('workflow_designer_http_timeout')} name="http_timeout">
               <InputNumber min={1} max={300} style={{ width: '100%' }} />
             </Form.Item>
+            {resultScriptField}
           </>
         )}
       </>

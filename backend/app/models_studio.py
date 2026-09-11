@@ -34,6 +34,9 @@ class AgentDefinition(Base):
     system_prompt_override = Column(Text,        nullable=True)
     skills                 = Column(JSON,        nullable=True)
     allowed_tools          = Column(JSON,        nullable=True)
+    # Workflow ids this agent may run via run_workflow. The agent is the
+    # principal of those runs, so this list is part of its declared capability.
+    allowed_workflows      = Column(JSON,        nullable=True)
     model_override         = Column(String(100), nullable=True)
     max_steps              = Column(Integer,     nullable=True)
     icon                   = Column(String(100), nullable=True)

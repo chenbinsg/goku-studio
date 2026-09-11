@@ -70,6 +70,7 @@ interface AgentDefinition {
   system_prompt_override: string | null
   skills: string[] | null
   allowed_tools: string[] | null
+  allowed_workflows?: string[] | null
   effective_tools: string[]
   model_override: string | null
   max_steps: number | null
@@ -199,6 +200,24 @@ const AgentList: React.FC = () => {
   const [baseTypes, setBaseTypes] = useState<BaseType[]>([])
   const [allTools, setAllTools] = useState<{ name: string; description?: string }[]>([])
   const [mcpTools, setMcpTools] = useState<{ name: string; description?: string; disabled?: boolean }[]>([])
+  // Workflows this agent may be configured to run via run_workflow.
+  const [workflowOptions, setWorkflowOptions] = useState<{ id: string; name: string }[]>([])
+  // MCP this agent needs — from its tool list and from the workflows it may run —
+  // and whether each is authorized (GET /agents/{id}/permission-check).
+  type PermItem = {
+    tool: string
+    server_id: string | null
+    capability_id: string | null
+    status: string
+    reason: string
+    sources: { type: string; workflow_id?: string; workflow_name?: string }[]
+  }
+  const PERM_STATUS_COLOR: Record<string, string> = {
+    authorized: 'success', unauthorized: 'error', quota_exceeded: 'warning',
+    disabled: 'default', unregistered: 'default',
+  }
+  const [permCheck, setPermCheck] = useState<{ items: PermItem[]; can_grant: boolean } | null>(null)
+  const [permLoading, setPermLoading] = useState(false)
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([])
   /** The fetch failed, as opposed to the library genuinely being empty. */
   const [skillsFailed, setSkillsFailed] = useState(false)
@@ -318,6 +337,7 @@ const AgentList: React.FC = () => {
   // environments verbatim (nothing is dropped on purpose), so the editor has to
   // be the place where that shows.
   const selectedTools: string[] = Form.useWatch('allowed_tools', form) || []
+  const selectedWorkflows: string[] = Form.useWatch('allowed_workflows', form) || []
   // Same three-way judgement the editor's dropdown makes, lifted out so the
   // read-only detail view can tell the identical story: a binding whose MCP
   // server was switched off is still there (just not running), while one whose
@@ -391,6 +411,52 @@ const AgentList: React.FC = () => {
       setMcpTools(mcp.tools || [])
     } catch {
       // ignore — MCP group will be empty
+    }
+    try {
+      const wf = await api.get<{ items: { id: string; name: string }[] }>('/workflows', { params: { page: 1, size: 100 } })
+      setWorkflowOptions(wf.items || [])
+    } catch {
+      // ignore — the workflow selector will be empty
+    }
+  }
+
+  const fetchPermissionCheck = async (agentId: string) => {
+    setPermLoading(true)
+    setPermCheck(null)
+    try {
+      setPermCheck(await api.get<{ items: PermItem[]; can_grant: boolean }>(`/agents/${agentId}/permission-check`))
+    } catch {
+      // leave it empty — the panel shows its empty state
+    } finally {
+      setPermLoading(false)
+    }
+  }
+
+  const grantPermission = async (item: PermItem) => {
+    if (!editingId || !item.server_id || !item.capability_id) return
+    try {
+      await api.post(`/mcp-servers/${item.server_id}/authorized-principals`, {
+        principal_type: 'agent',
+        principal_id: editingId,
+        mcp_capability_id: item.capability_id,
+        enabled: true,
+      })
+      message.success(t('agent_perm_grant_success'))
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      message.error(String(detail?.message || detail || t('agent_perm_grant_failure')))
+    }
+    fetchPermissionCheck(editingId)
+  }
+
+  const requestPermission = async (item: PermItem) => {
+    if (!editingId || !item.capability_id) return
+    try {
+      await api.post(`/agents/${editingId}/permission-requests`, { mcp_capability_id: item.capability_id })
+      message.success(t('agent_perm_request_success'))
+    } catch (err: any) {
+      const detail = err?.response?.data?.detail
+      message.error(String(detail?.message || detail || t('agent_perm_request_failure')))
     }
   }
 
@@ -577,6 +643,7 @@ const AgentList: React.FC = () => {
   const handleEdit = (agent: AgentDefinition) => {
     setEditingId(agent.id)
     fetchAllTools()  // refresh tool/MCP list each open so newly-registered tools show up
+    fetchPermissionCheck(agent.id)
     const base = baseTypes.find(t => t.key === agent.agent_type) || null
     setSelectedBaseType(base)
     // Resolve stored references before they reach the form: an old directory
@@ -595,6 +662,7 @@ const AgentList: React.FC = () => {
       system_prompt_override: agent.system_prompt_override,
       skills: skillRefs.resolved,
       allowed_tools: agent.allowed_tools,
+      allowed_workflows: agent.allowed_workflows || [],
       model_override: agent.model_override,
       max_steps: agent.max_steps,
       color: agent.color,
@@ -1746,6 +1814,75 @@ const AgentList: React.FC = () => {
                           })()}
                         />
                       </Form.Item>
+
+                      <Form.Item
+                        label={t('agent_edit_form_workflows')}
+                        name="allowed_workflows"
+                        help={t('agent_edit_workflows_help')}
+                      >
+                        <Select
+                          mode="multiple"
+                          allowClear
+                          showSearch
+                          optionFilterProp="label"
+                          placeholder={t('agent_edit_workflows_placeholder')}
+                          options={(() => {
+                            const known = new Set(workflowOptions.map(w => w.id))
+                            // A deleted workflow can still sit in the list; show it as
+                            // such so it can be removed instead of looking live.
+                            const missing = selectedWorkflows.filter(id => id && !known.has(id))
+                            return [
+                              ...workflowOptions.map(w => ({ value: w.id, label: w.name })),
+                              ...missing.map(id => ({
+                                value: id,
+                                label: `${id}${t('agent_edit_workflows_missing_suffix')}`,
+                                disabled: true,
+                              })),
+                            ]
+                          })()}
+                        />
+                      </Form.Item>
+
+                      {editingId && (
+                        <div style={{ marginBottom: 16, padding: '10px 12px', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                            <strong>{t('agent_perm_title')}</strong>
+                            <Button size="small" loading={permLoading} onClick={() => fetchPermissionCheck(editingId)}>
+                              {t('agent_perm_refresh')}
+                            </Button>
+                          </div>
+                          <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>{t('agent_perm_hint')}</div>
+                          {!permCheck || permCheck.items.length === 0 ? (
+                            <div style={{ color: '#888', fontSize: 12 }}>{t('agent_perm_empty')}</div>
+                          ) : permCheck.items.map(item => (
+                            <div
+                              key={item.tool}
+                              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px dashed #f0f0f0' }}
+                            >
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <code style={{ fontSize: 12, wordBreak: 'break-all' }}>{item.tool}</code>
+                                <div style={{ marginTop: 2 }}>
+                                  {item.sources.map((s, i) => (
+                                    <Tag key={i} style={{ fontSize: 11 }}>
+                                      {s.type === 'tools'
+                                        ? t('agent_perm_source_tools')
+                                        : t('agent_perm_source_workflow', { name: s.workflow_name })}
+                                    </Tag>
+                                  ))}
+                                </div>
+                              </div>
+                              <Tag color={PERM_STATUS_COLOR[item.status] || 'default'} title={item.reason || undefined}>
+                                {t(`agent_perm_status_${item.status}`)}
+                              </Tag>
+                              {item.status === 'unauthorized' && item.capability_id && (
+                                permCheck.can_grant
+                                  ? <Button size="small" type="primary" onClick={() => grantPermission(item)}>{t('agent_perm_grant')}</Button>
+                                  : <Button size="small" onClick={() => requestPermission(item)}>{t('agent_perm_request')}</Button>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                       <Form.Item label={t('agent_edit_form_model')} name="model_override" help={t('agent_edit_model_help')}>

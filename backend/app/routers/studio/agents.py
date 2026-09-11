@@ -39,6 +39,7 @@ class AgentDefinitionCreate(BaseModel):
     system_prompt_override: str | None = None
     skills: list[str] | None = None
     allowed_tools: list[str] | None = None
+    allowed_workflows: list[str] | None = None
     model_override: str | None = None
     max_steps: int | None = Field(None, ge=1, le=100)
     icon: str | None = None
@@ -73,6 +74,7 @@ class AgentDefinitionUpdate(BaseModel):
     system_prompt_override: str | None = None
     skills: list[str] | None = None
     allowed_tools: list[str] | None = None
+    allowed_workflows: list[str] | None = None
     model_override: str | None = None
     max_steps: int | None = Field(None, ge=1, le=100)
     icon: str | None = None
@@ -403,6 +405,7 @@ def _build_export_payload(agent, db) -> dict:
             "figure_url": agent.figure_url,
             "system_prompt_override": agent.system_prompt_override,
             "skills": _skill_refs_for_export(db, agent.skills),
+            "allowed_workflows": _workflow_refs_for_export(db, agent.allowed_workflows),
             "allowed_tools": agent.allowed_tools,
             "model_override": agent.model_override,
             "max_steps": agent.max_steps,
@@ -491,6 +494,46 @@ def _skill_refs_for_export(db, skill_ids) -> list[str]:
         return []
     by_id, _ = _skill_id_code_maps(db)
     return [by_id.get(r, r) for r in refs]
+
+
+def _workflow_key_of(workflow) -> str | None:
+    variables = getattr(workflow, "variables", None)
+    return variables.get("_workflow_key") if isinstance(variables, dict) else None
+
+
+def _workflow_refs_for_export(db, workflow_ids) -> list[str]:
+    """Workflow ids → portable workflow keys, the same trick as skills.
+
+    ``variables["_workflow_key"]`` is what a workflow import matches on, so an
+    export carrying keys can be imported anywhere, while ids can only come
+    home. A reference that maps to nothing here is passed through unchanged so
+    it stays visible on the other side instead of disappearing.
+    """
+    refs = [r for r in (workflow_ids or []) if r]
+    if not refs:
+        return []
+    from app.models import Workflow
+    rows = db.query(Workflow).filter(Workflow.id.in_(refs)).all()
+    by_id = {wf.id: _workflow_key_of(wf) for wf in rows if _workflow_key_of(wf)}
+    return [by_id.get(r, r) for r in refs]
+
+
+def _resolve_workflow_refs(db, refs) -> list[str]:
+    """Map exported workflow references onto local ids.
+
+    Accepts either form — an id (an export from this environment) or a
+    ``_workflow_key`` (one from another). Unresolvable references are kept as
+    written, the same rule as skills: the editor shows them as deleted, and
+    saving from there is what refuses.
+    """
+    refs = [r for r in (refs or []) if r]
+    if not refs:
+        return []
+    from app.models import Workflow
+    rows = db.query(Workflow).all()
+    ids = {wf.id for wf in rows}
+    by_key = {_workflow_key_of(wf): wf.id for wf in rows if _workflow_key_of(wf)}
+    return [r if r in ids else by_key.get(r, r) for r in refs]
 
 
 def _resolve_skill_refs(db, refs) -> tuple[list[str], list[str]]:
@@ -947,6 +990,7 @@ def create_agent(
         system_prompt_override=data.system_prompt_override,
         skills=data.skills,
         allowed_tools=data.allowed_tools,
+        allowed_workflows=_filter_allowed_tools(data.allowed_workflows) if data.allowed_workflows is not None else None,
         model_override=data.model_override,
         max_steps=data.max_steps,
         icon=data.icon or base.get("icon"),
@@ -1104,6 +1148,51 @@ async def optimize_prompt(
     )
 
 
+@router.get("/{agent_id}/permission-check")
+def agent_permission_check(
+    agent_id: str,
+    db: Session = Depends(get_db),
+    user = Depends(get_current_user),
+):
+    """MCP capabilities this agent needs — from its tool list and from the
+    workflows it may run — and whether each is authorized. ``can_grant`` tells
+    the page whether to offer 授权 or 申请授权."""
+    from app.models import AgentDefinition
+    from app.services import agent_permissions
+
+    agent = db.query(AgentDefinition).filter(AgentDefinition.id == agent_id).first()
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+    return {
+        "items": agent_permissions.agent_permission_check(db, agent),
+        "can_grant": agent_permissions.user_has_permission(
+            db, user, agent_permissions.GRANT_PERMISSION),
+    }
+
+
+class AgentPermissionRequest(BaseModel):
+    mcp_capability_id: str
+    reason: str | None = None
+
+
+@router.post("/{agent_id}/permission-requests", status_code=201)
+async def create_agent_permission_request(
+    agent_id: str,
+    data: AgentPermissionRequest,
+    request: Request,
+    user = Depends(get_current_user),
+):
+    """Approvals live in goku-core, so the request is forwarded there."""
+    from app.services import core_runtime_proxy
+
+    return await core_runtime_proxy.post_to_core(
+        request,
+        f"/api/v1/agents/{agent_id}/permission-requests",
+        {"mcp_capability_id": data.mcp_capability_id, "reason": data.reason},
+        purpose="MCP 授权申请",
+    )
+
+
 @router.get("/{agent_id}")
 def get_agent(
     agent_id: str,
@@ -1247,6 +1336,11 @@ def import_agent(
     if allowed_tools is not None:
         allowed_tools = _filter_allowed_tools(allowed_tools, base["tools"])
 
+    # Workflow references travel as portable keys; resolve them to local ids.
+    allowed_workflows = agent_data.get("allowed_workflows")
+    if allowed_workflows is not None:
+        allowed_workflows = _resolve_workflow_refs(db, allowed_workflows)
+
     imported_figure_url = _write_imported_figure(name, payload.get("figure_asset"))
     figure_url = imported_figure_url or agent_data.get("figure_url")
     # Accept /icons/ (workspace) and /api/v1/uploads/ (workspace uploads); drop anything else.
@@ -1274,6 +1368,11 @@ def import_agent(
         existing.system_prompt_override = agent_data.get("system_prompt_override")
         existing.skills = skills
         existing.allowed_tools = allowed_tools
+        # Only when the file carries the field: an export written before it
+        # existed (or by an environment still on the old build) would otherwise
+        # clear the agent's configured workflows on import.
+        if allowed_workflows is not None:
+            existing.allowed_workflows = allowed_workflows
         existing.model_override = agent_data.get("model_override")
         existing.max_steps = agent_data.get("max_steps")
         existing.icon = agent_data.get("icon") or base.get("icon")
@@ -1327,6 +1426,7 @@ def import_agent(
         system_prompt_override=agent_data.get("system_prompt_override"),
         skills=skills,
         allowed_tools=allowed_tools,
+        allowed_workflows=allowed_workflows,
         model_override=agent_data.get("model_override"),
         max_steps=agent_data.get("max_steps"),
         icon=agent_data.get("icon") or base.get("icon"),
@@ -1420,6 +1520,9 @@ def update_agent(
     if data.allowed_tools is not None:
         base_tools = SUBAGENT_TYPES.get(agent.agent_type, {}).get("tools", [])
         agent.allowed_tools = _filter_allowed_tools(data.allowed_tools, base_tools)
+    if data.allowed_workflows is not None:
+        # Same normalisation as tools: drop blanks and duplicates, keep order.
+        agent.allowed_workflows = _filter_allowed_tools(data.allowed_workflows)
     if data.name_i18n is not None:
         agent.name_i18n = data.name_i18n
     if data.display_name is not None:
@@ -1605,6 +1708,7 @@ def _write_agent_seed(agent) -> None:
             "description": agent.description,
             "system_prompt_override": agent.system_prompt_override,
             "allowed_tools": _as_list(agent.allowed_tools),
+            "allowed_workflows": _as_list(agent.allowed_workflows),
             "skills": _as_list(agent.skills),
             "is_active": int(bool(agent.is_active)),
             "tenant_id": agent.tenant_id,
@@ -1752,6 +1856,7 @@ def _serialize(agent) -> dict:
         "skills": agent.skills,
         "allowed_tools": agent.allowed_tools,
         "effective_tools": agent.allowed_tools if agent.allowed_tools is not None else base.get("tools", []),
+        "allowed_workflows": agent.allowed_workflows or [],
         "model_override": agent.model_override,
         "max_steps": agent.max_steps,
         "effective_max_steps": agent.max_steps if agent.max_steps is not None else base.get("max_steps"),

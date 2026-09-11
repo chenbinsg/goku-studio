@@ -237,8 +237,46 @@ def _strip_runtime_identity(variables, *, where: str = ""):
     return {k: v for k, v in variables.items() if k not in _RUNTIME_IDENTITY_KEYS}
 
 
+def _reject_bad_result_scripts(dag, request: Request | None = None) -> None:
+    """400 on a node whose ``result_script`` cannot compile.
+
+    The sandbox lives in goku-core (same arrangement as MCP capability scripts,
+    which Studio relays rather than re-implements), so the check is one sync call
+    to core instead of a second copy of RestrictedPython here.
+
+    If core is unreachable the save is allowed. This is an early warning, not the
+    gate: core validates every DAG again before it runs, so an unchecked script
+    still cannot execute — whereas blocking saves whenever the runtime is down
+    would make the designer unusable for editing.
+    """
+    if not isinstance(dag, dict) or not dag.get("nodes"):
+        return
+    if not any(str((n.get("config") or {}).get("result_script") or "").strip()
+               for n in dag.get("nodes") or []):
+        return  # nothing to check — skip the round trip entirely
+    import httpx
+    from app.config import settings
+    url = settings.CORE_API_URL.rstrip("/") + "/api/v1/workflows/validate-scripts"
+    headers = {"Content-Type": "application/json"}
+    if request is not None and request.headers.get("authorization"):
+        headers["Authorization"] = request.headers["authorization"]
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.post(url, json={"dag": dag}, headers=headers)
+    except httpx.RequestError as exc:
+        logger.warning("result_script check skipped, goku-core unreachable: %s", exc)
+        return
+    if resp.status_code >= 400:
+        logger.warning("result_script check skipped, core returned %s", resp.status_code)
+        return
+    errors = (resp.json() or {}).get("errors") or []
+    if errors:
+        raise HTTPException(status_code=400, detail="; ".join(errors))
+
+
 @router.post("", response_model=schemas.WorkflowResponse, status_code=201)
-def create_workflow(workflow_data: schemas.WorkflowCreate, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+def create_workflow(workflow_data: schemas.WorkflowCreate, request: Request, db: Session = Depends(get_db), current_user: models.User = Depends(auth.get_current_user)):
+    _reject_bad_result_scripts(workflow_data.dag, request)
     stored_triggers = _prepare_workflow_triggers(workflow_data.triggers)
     workflow_id = str(uuid.uuid4())
     created_at = datetime.utcnow()
@@ -352,6 +390,7 @@ def export_workflow(
 
 @router.post("/import", status_code=201)
 def import_workflow(
+    request: Request,
     file: UploadFile = File(...),
     mode: str = Query("upsert", pattern="^(upsert|copy)$"),
     db: Session = Depends(get_db),
@@ -377,6 +416,9 @@ def import_workflow(
     wf_data = payload.get("workflow")
     if not isinstance(wf_data, dict) or not wf_data.get("dag"):
         raise HTTPException(status_code=400, detail="Import payload is missing workflow.dag")
+    # An imported DAG carries its nodes' result scripts verbatim — a file written
+    # against another environment is exactly where an uncompilable one comes from.
+    _reject_bad_result_scripts(wf_data.get("dag"), request)
 
     name = (wf_data.get("name") or "Imported Workflow").strip()
     workflow_key = (wf_data.get("workflow_key") or "").strip() or _workflow_portable_key(name)
@@ -475,6 +517,7 @@ def import_workflow(
 def update_workflow(
     workflow_id: str,
     data: schemas.WorkflowCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(auth.get_current_user),
 ):
@@ -488,6 +531,7 @@ def update_workflow(
     if data.description is not None:
         workflow.description = data.description
     if data.dag is not None:
+        _reject_bad_result_scripts(data.dag, request)
         workflow.dag = data.dag
     if data.triggers is not None:
         workflow.triggers = _prepare_workflow_triggers(
@@ -532,6 +576,15 @@ def update_workflow(
         reload_schedules()
     except Exception:
         pass
+
+    # Agents that will run this workflow but lack an MCP authorization it needs —
+    # caught at save, rather than at the first run.
+    try:
+        from app.services.agent_permissions import workflow_permission_warnings
+        response_data["permission_warnings"] = workflow_permission_warnings(db, workflow)
+    except Exception:
+        logger.warning("permission check after workflow save failed", exc_info=True)
+        response_data["permission_warnings"] = []
 
     return response_data
 
