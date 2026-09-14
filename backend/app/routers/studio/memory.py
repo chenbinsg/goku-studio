@@ -252,6 +252,23 @@ def update_memory(
     }
 
 
+# A delete names what it removed, not just how many: the memories are gone
+# afterwards, and the audit row is the only place left that says what they
+# were. Capped so one "delete all" cannot write an unbounded row.
+_BULK_AUDIT_ITEMS = 200
+
+
+def _audit_items(rows) -> list:
+    from app.services import change_audit
+    out = []
+    for m in rows[:_BULK_AUDIT_ITEMS]:
+        try:
+            out.append(change_audit.snapshot(m, skip=frozenset({"vector_id"})))
+        except Exception:
+            out.append({"id": m.id})
+    return out
+
+
 @router.post("/bulk-delete")
 def bulk_delete_memories(
     payload: MemoryBulkDelete,
@@ -292,6 +309,7 @@ def bulk_delete_memories(
     vector_ids = [m.vector_id for m in rows if m.vector_id]
     ids = [m.id for m in rows]
     deleted = len(rows)
+    items = _audit_items(rows)
 
     for m in rows:
         db.delete(m)
@@ -300,7 +318,8 @@ def bulk_delete_memories(
     auth.log_audit_action(
         db, current_user.id, "bulk_delete_memory", "memory", None,
         {"deleted": deleted, "mode": "ids" if payload.ids else "all",
-         "type": payload.type, "tag": payload.tag},
+         "type": payload.type, "tag": payload.tag,
+         "items": items, "items_truncated": deleted > _BULK_AUDIT_ITEMS},
     )
 
     if vector_ids:
@@ -331,9 +350,11 @@ def delete_memory(
         raise HTTPException(status_code=403, detail="Access denied")
 
     vector_id = m.vector_id
+    _snap = _audit_items([m])[0]
     db.delete(m)
     db.commit()
-    auth.log_audit_action(db, current_user.id, "delete_memory", "memory", memory_id, {})
+    auth.log_audit_action(db, current_user.id, "delete_memory", "memory", memory_id,
+                          {"snapshot": _snap})
 
     if vector_id:
         try:

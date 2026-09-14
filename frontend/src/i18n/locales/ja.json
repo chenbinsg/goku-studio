@@ -2893,5 +2893,16 @@
   "agent_history_no_detail": "項目の記録なし（変更記録機能の導入前）",
   "agent_history_deleted": "削除済み — 詳細に完全なスナップショットを保持",
   "agent_history_load_failed": "変更履歴の読み込みに失敗しました",
-  "agent_history_more": "さらに {{count}} 件の古い記録"
+  "agent_history_more": "さらに {{count}} 件の古い記録",
+  "agent_history_col_trigger": "トリガー",
+  "agent_history_system": "システム",
+  "audit_trigger_ui": "画面操作",
+  "audit_trigger_conversation": "エージェントへの指示",
+  "audit_trigger_schedule": "定時実行",
+  "audit_trigger_rule": "ルール起動",
+  "audit_trigger_deploy": "デプロイ・起動",
+  "audit_via_agent": "{{agent}} 経由",
+  "audit_trigger_unrecorded": "未記録",
+  "audit_trigger_unrecorded_hint": "この記録にはトリガーが含まれていません。トリガーは途中から記録され始めたため、それ以前の記録にはこの項目がありません。画面操作やタスクを経由しないバックグラウンド処理の可能性もあります。",
+  "audit_object_deleted_tag": "削除済み"
 }

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.models import User, AuditLog
 from app.middleware.trace import get_trace_id
+from app.services import audit_context
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
@@ -383,8 +384,15 @@ def log_audit_action(
     details: Optional[dict] = None,
     request: Optional[Request] = None,
     tenant_id: Optional[str] = None,
+    commit: bool = True,
 ):
-    """Log an audit action"""
+    """Log an audit action.
+
+    `commit=False` stages the row on the caller's session instead of committing
+    it. That is for a write which is itself not yet committed — an approval
+    created inside a larger transaction — so the audit row lands exactly when,
+    and only if, the thing it records does.
+    """
     effective_tenant_id = tenant_id
     if effective_tenant_id is None and request is not None:
         effective_tenant_id = getattr(request.state, "tenant_id", None)
@@ -401,6 +409,27 @@ def log_audit_action(
     if not trace_id:
         trace_id = get_trace_id() or None
 
+    # How this change came about. An agent task installs an origin for the whole
+    # run (services/audit_context); with no origin in force, a request behind the
+    # call means a person acting in the UI, and no request means neither — a
+    # startup seed or a console script, which is recorded as unknown rather than
+    # guessed at.
+    origin = audit_context.get_origin()
+    if origin is not None:
+        trigger_type = origin.trigger_type
+        actor_agent_id = origin.actor_agent_id
+        origin_task_id = origin.task_id
+    else:
+        # Inside an HTTP request means a person acting through the API the UI
+        # calls. Most call sites never pass `request` (74 of 86), so going by
+        # the request object alone left UI actions unmarked — a role change made
+        # on the admin page read as trigger unknown. TraceMiddleware sets the
+        # trace id on every request and nowhere else, so it is the signal.
+        in_request = request is not None or bool(get_trace_id())
+        trigger_type = audit_context.TRIGGER_UI if in_request else None
+        actor_agent_id = None
+        origin_task_id = None
+
     audit_log = AuditLog(
         id=str(uuid.uuid4()),
         user_id=user_id,
@@ -410,9 +439,30 @@ def log_audit_action(
         resource_id=resource_id,
         details=details,
         trace_id=trace_id,
+        trigger_type=trigger_type,
+        actor_agent_id=actor_agent_id,
+        task_id=origin_task_id,
         ip_address=request.client.host if request else None,
         user_agent=request.headers.get("user-agent") if request else None
     )
+    if not commit:
+        # A staged row fails together with the caller's transaction, so it must
+        # not be able to fail at all. References that point at nothing are
+        # dropped — the given value kept in the details for the reader — rather
+        # than letting a stray actor id abort the approval being recorded.
+        try:
+            if audit_log.user_id and not db.query(User.id).filter(
+                    User.id == audit_log.user_id).first():
+                audit_log.details = {**(audit_log.details or {}), "actor_ref": audit_log.user_id}
+                audit_log.user_id = None
+            if audit_log.tenant_id:
+                from app.models import Tenant
+                if not db.query(Tenant.id).filter(Tenant.id == audit_log.tenant_id).first():
+                    audit_log.tenant_id = None
+        except Exception:
+            audit_log.user_id, audit_log.tenant_id = None, None
+        db.add(audit_log)
+        return
     try:
         db.add(audit_log)
         db.commit()

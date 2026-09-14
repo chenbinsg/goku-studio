@@ -2541,7 +2541,29 @@ function AgentChangeLog({ agentId }: { agentId: string | null }) {
           { title: t('agent_history_col_time'), dataIndex: 'created_at', width: 150,
             render: (v: string) => <span style={{ fontSize: 12 }}>{new Date(v).toLocaleString()}</span> },
           { title: t('agent_history_col_user'), dataIndex: 'username', width: 110,
-            render: (v: string | null) => v || '—' },
+            // 操作人一律是负责人本人；没有负责人的只有未经审批的自动变更。
+            render: (v: string | null) => v || t('agent_history_system') },
+          { title: t('agent_history_col_trigger'), key: 'trigger', width: 150,
+            render: (_: any, r: any) => (
+              r.trigger_type
+                ? (
+                  <div>
+                    <div style={{ fontSize: 12 }}>{t(`audit_trigger_${r.trigger_type}`)}</div>
+                    {r.actor_agent_id && (
+                      <div style={{ fontSize: 11, color: 'rgba(0,0,0,.45)' }}>
+                        {t('audit_via_agent', {
+                          agent: r.actor_agent_name || String(r.actor_agent_id).slice(0, 8),
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )
+                : (
+                  <Tooltip title={t('audit_trigger_unrecorded_hint')}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>{t('audit_trigger_unrecorded')}</Text>
+                  </Tooltip>
+                )
+            ) },
           { title: t('agent_history_col_action'), dataIndex: 'action', width: 170,
             render: (v: string) => <Tag color="blue">{v}</Tag> },
           { title: t('agent_history_col_changes'), key: 'changes',

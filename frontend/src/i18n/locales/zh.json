@@ -2893,5 +2893,16 @@
   "agent_history_no_detail": "未记录字段明细（该条早于变更记录功能上线）",
   "agent_history_deleted": "已删除，详情中保留完整快照",
   "agent_history_load_failed": "变更记录加载失败",
-  "agent_history_more": "另有 {{count}} 条更早的记录"
+  "agent_history_more": "另有 {{count}} 条更早的记录",
+  "agent_history_col_trigger": "触发方式",
+  "agent_history_system": "系统",
+  "audit_trigger_ui": "界面操作",
+  "audit_trigger_conversation": "对话指令",
+  "audit_trigger_schedule": "定时任务",
+  "audit_trigger_rule": "规则触发",
+  "audit_trigger_deploy": "部署与启动",
+  "audit_via_agent": "经 {{agent}}",
+  "audit_trigger_unrecorded": "未记录",
+  "audit_trigger_unrecorded_hint": "这条记录写入时没有带上触发方式：触发方式是后来才开始记录的，更早的记录都没有这一项；也可能是不经过界面、也不在任务里的后台写入。",
+  "audit_object_deleted_tag": "已删除"
 }

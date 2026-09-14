@@ -2893,5 +2893,16 @@
   "agent_history_no_detail": "No field detail (predates change tracking)",
   "agent_history_deleted": "Deleted — full snapshot kept in details",
   "agent_history_load_failed": "Failed to load change history",
-  "agent_history_more": "{{count}} older entries"
+  "agent_history_more": "{{count}} older entries",
+  "agent_history_col_trigger": "Trigger",
+  "agent_history_system": "System",
+  "audit_trigger_ui": "In the UI",
+  "audit_trigger_conversation": "Asked an agent",
+  "audit_trigger_schedule": "Scheduled run",
+  "audit_trigger_rule": "Triggered by a rule",
+  "audit_trigger_deploy": "Deploy / startup",
+  "audit_via_agent": "via {{agent}}",
+  "audit_trigger_unrecorded": "Not recorded",
+  "audit_trigger_unrecorded_hint": "This record was written without a trigger. Triggers were only recorded from a later date, so older records have none; it may also be a background write made outside any UI action or task.",
+  "audit_object_deleted_tag": "Deleted"
 }

@@ -1612,12 +1612,22 @@ def list_agent_changes(
         q = q.filter(or_(AuditLog.tenant_id == tenant_id, AuditLog.tenant_id.is_(None)))
 
     total = q.count()
-    rows = q.order_by(AuditLog.created_at.desc()).offset(offset).limit(limit).all()
+    rows = q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).offset(offset).limit(limit).all()
 
     names: dict[str, str] = {}
     user_ids = {r.user_id for r in rows if r.user_id}
     if user_ids:
         names = {u.id: u.username for u in db.query(User).filter(User.id.in_(user_ids)).all()}
+
+    # An agent that carried out a change is named, not just id'd — the actor
+    # column still holds the person responsible for it.
+    agent_names: dict[str, str] = {}
+    agent_ids = {r.actor_agent_id for r in rows if r.actor_agent_id}
+    if agent_ids:
+        agent_names = {
+            a.id: a.name
+            for a in db.query(AgentDefinition).filter(AgentDefinition.id.in_(agent_ids)).all()
+        }
 
     return {
         "total": total,
@@ -1628,7 +1638,13 @@ def list_agent_changes(
                 "user_id": r.user_id,
                 "username": names.get(r.user_id) if r.user_id else None,
                 "details": r.details,
-                "ip_address": r.ip_address,
+                # No ip_address: production records the frontend nginx pod's
+                # address rather than the caller's, and a field that is reliably
+                # wrong is worse than one that is absent.
+                "trigger_type": r.trigger_type,
+                "actor_agent_id": r.actor_agent_id,
+                "actor_agent_name": agent_names.get(r.actor_agent_id) if r.actor_agent_id else None,
+                "task_id": r.task_id,
                 "created_at": r.created_at,
             }
             for r in rows

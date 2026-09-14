@@ -342,7 +342,7 @@ def list_change_logs(
     q = db.query(AuditLog).filter(or_(*clauses))
     total = q.count()
     rows = (
-        q.order_by(AuditLog.created_at.desc())
+        q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
         .offset(offset)
         .limit(limit)
         .all()

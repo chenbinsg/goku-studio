@@ -9,6 +9,7 @@ These tables belong to the platform layer. Studio and Core read them
 for auth/tenancy context but never write them directly.
 """
 from datetime import datetime
+from sqlalchemy.dialects import mysql
 from sqlalchemy import (
     Column, Integer, String, DateTime, Text, Float, Boolean,
     ForeignKey, JSON, Enum, Index, UniqueConstraint,
@@ -396,9 +397,25 @@ class AuditLog(Base):
     trace_id      = Column(String(100), nullable=True, index=True)
     ip_address    = Column(String(50),  nullable=True)
     user_agent    = Column(String(500), nullable=True)
-    created_at    = Column(DateTime,    default=datetime.utcnow)
+    # Microseconds: rows written in the same second must still list in the order
+    # they happened (see alembic 0141).
+    created_at    = Column(DateTime().with_variant(mysql.DATETIME(fsp=6), "mysql"),
+                           default=datetime.utcnow)
+
+    # How the change was triggered, and what carried it out. The actor above is
+    # always the responsible person; these three say whether they clicked it
+    # themselves or an agent did it on their instruction, and which run it was.
+    # Filled from services/audit_context at write time. Migration 0134.
+    trigger_type    = Column(String(32), nullable=True)
+    actor_agent_id  = Column(String(36), nullable=True)
+    task_id         = Column(String(36), nullable=True)
 
     __table_args__ = (
         Index("ix_audit_logs_user_created",     "user_id",   "created_at"),
         Index("ix_audit_logs_action_resource",  "action",    "resource_type", "created_at"),
+        # Reading one object's history: neither index above contains
+        # resource_id, so "who changed this agent" degraded to a scan of every
+        # row of that resource_type. Migration 0129.
+        Index("ix_audit_logs_tenant_resource",
+              "tenant_id", "resource_type", "resource_id", "created_at"),
     )

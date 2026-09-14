@@ -191,11 +191,19 @@ class registry:
             from app.services import audit
             audit.log(
                 action=f"tool_execute:{name}",
-                user_id=ctx.user_id or "agent",
+                # user_id is a FK to users.id and "agent" is not a user. A tool
+                # run with no authenticated user behind it has no actor: NULL.
+                user_id=ctx.user_id or None,
                 details={
                     "tool": name,
                     "params_summary": json.dumps(params, ensure_ascii=False, default=str)[:200],
                     "success": "error" not in result,
+                    # The run was already timed for the metric above; carrying it
+                    # here too is what lets the audit page answer "which calls
+                    # were slow" without joining task_steps.
+                    "duration_ms": round(_duration * 1000),
+                    "error": (str(result.get("error"))[:300]
+                              if isinstance(result, dict) and result.get("error") else None),
                 },
                 db=db,
                 resource_type="tool",
