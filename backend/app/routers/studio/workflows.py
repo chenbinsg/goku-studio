@@ -869,13 +869,22 @@ async def stream_execution_events(
     workflow_id: str,
     execution_id: str,
     request: Request,
-    db: Session = Depends(get_db),
 ):
     """SSE stream for real-time execution monitoring."""
     from app.config import settings
+    from app.db import SessionLocal
     import httpx
 
-    _require_request_user(request, db)
+    # Connect to read, release immediately — deliberately NOT Depends(get_db).
+    # A request-scoped session is held for the whole request, and this request
+    # lives as long as the page stays open. Worse here than in core: this one
+    # proxies the stream, so an open page pinned a connection on BOTH sides. The
+    # only DB work is the auth check.
+    db = SessionLocal()
+    try:
+        _require_request_user(request, db)
+    finally:
+        db.close()
 
     url = settings.CORE_API_URL.rstrip("/") + f"/api/v1/workflows/{workflow_id}/executions/{execution_id}/events"
     headers = {}

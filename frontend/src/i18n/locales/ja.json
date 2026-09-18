@@ -2904,5 +2904,7 @@
   "audit_via_agent": "{{agent}} 経由",
   "audit_trigger_unrecorded": "未記録",
   "audit_trigger_unrecorded_hint": "この記録にはトリガーが含まれていません。トリガーは途中から記録され始めたため、それ以前の記録にはこの項目がありません。画面操作やタスクを経由しないバックグラウンド処理の可能性もあります。",
-  "audit_object_deleted_tag": "削除済み"
+  "audit_object_deleted_tag": "削除済み",
+  "workflow_designer_model_default": "プラットフォーム既定",
+  "workflow_designer_model_default_extra": "未指定の場合、実行時にプラットフォーム既定のモデルを使用します"
 }

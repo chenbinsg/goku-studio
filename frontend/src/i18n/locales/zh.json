@@ -2904,5 +2904,7 @@
   "audit_via_agent": "经 {{agent}}",
   "audit_trigger_unrecorded": "未记录",
   "audit_trigger_unrecorded_hint": "这条记录写入时没有带上触发方式：触发方式是后来才开始记录的，更早的记录都没有这一项；也可能是不经过界面、也不在任务里的后台写入。",
-  "audit_object_deleted_tag": "已删除"
+  "audit_object_deleted_tag": "已删除",
+  "workflow_designer_model_default": "跟随平台默认",
+  "workflow_designer_model_default_extra": "留空表示不指定模型，执行时按平台默认模型解析"
 }

@@ -915,10 +915,22 @@ const WorkflowDesignerInner: React.FC = () => {
                 maxTagPlaceholder={(omitted) => `+${omitted.length} more`}
               />
             </Form.Item>
-            <Form.Item label={t('workflow_designer_model')} name="model">
+            {/* 留空 = 不把 model 写进节点 config，交给 model_policy / 平台默认解析。
+                没有这个选项时，一旦选过具体模型就只能在具体模型之间换，节点会被永久
+                钉在某个模型上——平台换默认模型时这些工作流不会跟着走。 */}
+            <Form.Item
+              label={t('workflow_designer_model')}
+              name="model"
+              extra={t('workflow_designer_model_default_extra')}
+            >
               <Select
                 showSearch
-                options={availableModels.map((m) => ({ label: m, value: m }))}
+                allowClear
+                placeholder={t('workflow_designer_model_default')}
+                options={[
+                  { label: t('workflow_designer_model_default'), value: '' },
+                  ...availableModels.map((m) => ({ label: m, value: m })),
+                ]}
               />
             </Form.Item>
             <Form.Item label={t('workflow_designer_timeout')} name="timeout">

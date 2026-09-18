@@ -2904,5 +2904,7 @@
   "audit_via_agent": "via {{agent}}",
   "audit_trigger_unrecorded": "Not recorded",
   "audit_trigger_unrecorded_hint": "This record was written without a trigger. Triggers were only recorded from a later date, so older records have none; it may also be a background write made outside any UI action or task.",
-  "audit_object_deleted_tag": "Deleted"
+  "audit_object_deleted_tag": "Deleted",
+  "workflow_designer_model_default": "Platform default",
+  "workflow_designer_model_default_extra": "Leave empty to use the platform default model at run time"
 }
