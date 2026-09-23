@@ -59,6 +59,12 @@ const Root: React.FC = () => {
   const { i18n } = useTranslation()
   const antLocale = ANT_LOCALES[i18n.language] ?? zhCN
 
+  // 色板开关。darkAlgorithm 只覆盖 antd 组件，页面里手写 div 的颜色靠 index.css
+  // 里的 --s-* / --b-* / --t-* 变量，由这个属性整体切换（见色板那段注释）。
+  React.useEffect(() => {
+    document.documentElement.dataset.theme = isDark ? 'dark' : 'light'
+  }, [isDark])
+
   return (
     <ConfigProvider
       locale={antLocale}

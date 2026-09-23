@@ -511,7 +511,7 @@ const McpServerList: React.FC = () => {
         </Col>
         <Col xs={12} sm={6}>
           <Card>
-            <Statistic title={t('mcp_server_list_stats_disabled')} value={stats?.disabled ?? 0} valueStyle={{ color: '#8c8c8c' }} />
+            <Statistic title={t('mcp_server_list_stats_disabled')} value={stats?.disabled ?? 0} valueStyle={{ color: 'var(--t-8c8c8c)' }} />
           </Card>
         </Col>
       </Row>

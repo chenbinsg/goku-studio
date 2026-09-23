@@ -117,7 +117,7 @@ const AgentRuntimeDashboard: React.FC = () => {
   const globalPct   = totalSlots > 0 ? Math.round((totalBusy / totalSlots) * 100) : 0
 
   return (
-    <div style={{ padding: 24, minHeight: '100vh', background: '#f6f8fb' }}>
+    <div style={{ padding: 24, minHeight: '100vh', background: 'var(--s-f6f8fb)' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 20, flexWrap: 'wrap', gap: 12 }}>
         <div>
@@ -144,9 +144,9 @@ const AgentRuntimeDashboard: React.FC = () => {
       {/* Summary banner */}
       <div
         style={{
-          background: '#fff',
+          background: 'var(--s-ffffff)',
           borderRadius: 14,
-          border: '1px solid #edf1f6',
+          border: '1px solid var(--b-edf1f6)',
           padding: '16px 24px',
           marginBottom: 20,
           boxShadow: '0 2px 10px rgba(15,23,42,0.035)',

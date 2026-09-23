@@ -177,7 +177,7 @@ export function ExportServersModal({
       )}
       <div style={{ maxHeight: 320, overflow: 'auto' }}>
         {(loading ? (codes || []).map((c): ServerBinding => ({ code: c, name: c, bound_connections: [], capability_config_count: 0 })) : rows).map((r) => (
-          <div key={r.code} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div key={r.code} style={{ padding: '8px 0', borderBottom: '1px solid var(--b-f0f0f0)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span><Text code>{r.code}</Text> <Text type="secondary" style={{ fontSize: 12 }}>{r.name}</Text></span>
             <Space direction="vertical" align="end" size={2}>
               {r.bound_connections.length > 0 && (
@@ -349,7 +349,7 @@ function ServerImportResultModal({
                 .filter((n: string) => n && !list!.some((c) => c.capability_name === n))
             : []
           return (
-            <div key={s.id} style={{ padding: '10px 0', borderBottom: '1px solid #f0f0f0' }}>
+            <div key={s.id} style={{ padding: '10px 0', borderBottom: '1px solid var(--b-f0f0f0)' }}>
               <Space wrap>
                 <Text code>{s.code}</Text>
                 <Button
@@ -799,7 +799,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
       // 鉴权框显示条件:有待填 secret,且没被跳过(冲突项须选了改名)
       const showSecret = !!s && !skipped && (!d || d.action === 'rename')
       return (
-        <div key={code} style={{ padding: '10px 0', borderBottom: '1px solid #f0f0f0' }}>
+        <div key={code} style={{ padding: '10px 0', borderBottom: '1px solid var(--b-f0f0f0)' }}>
           <Space direction="vertical" style={{ width: '100%' }} size={6}>
             <Space wrap>
               <Text code>{code}</Text>
@@ -884,7 +884,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
             <p><Text type="secondary">{t('mcp_transfer_conflict_hint')}</Text></p>
             <div style={{ maxHeight: 300, overflow: 'auto' }}>
               {decisions.map((d, idx) => (
-                <div key={d.original} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                <div key={d.original} style={{ padding: '8px 0', borderBottom: '1px solid var(--b-f0f0f0)' }}>
                   <Space direction="vertical" style={{ width: '100%' }} size={4}>
                     <Space>
                       <Text code>{d.original}</Text>
@@ -932,7 +932,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
             </p>
             <div style={{ maxHeight: 300, overflow: 'auto' }}>
               {connFixes.map((f, idx) => (
-                <div key={`${f.itemCode}-${f.field}`} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                <div key={`${f.itemCode}-${f.field}`} style={{ padding: '8px 0', borderBottom: '1px solid var(--b-f0f0f0)' }}>
                   <Space wrap>
                     <Text code>{f.itemCode}</Text>
                     <Text type="secondary" style={{ fontSize: 12 }}>
@@ -970,7 +970,7 @@ export function McpImportButton({ path, onDone }: { path: string; onDone: () => 
             </p>
             <div style={{ maxHeight: 300, overflow: 'auto' }}>
               {secretFills.map((s, idx) => (
-                <div key={s.connCode} style={{ padding: '8px 0', borderBottom: '1px solid #f0f0f0' }}>
+                <div key={s.connCode} style={{ padding: '8px 0', borderBottom: '1px solid var(--b-f0f0f0)' }}>
                   <Space direction="vertical" style={{ width: '100%' }} size={4}>
                     <Text code>{s.connCode}</Text>
                     <Input.TextArea

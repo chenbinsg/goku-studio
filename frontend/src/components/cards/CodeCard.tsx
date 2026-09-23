@@ -35,8 +35,8 @@ const CodeCard: React.FC<Props> = ({ card, onAction }) => {
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: '4px 12px',
-        background: '#f5f5f5',
-        borderBottom: '1px solid #e8e8e8',
+        background: 'var(--s-f5f5f5)',
+        borderBottom: '1px solid var(--b-e8e8e8)',
       }}>
         <Text type="secondary" style={{ fontSize: 12 }}>{data.language}</Text>
         <Space size={4}>
@@ -70,7 +70,7 @@ const CodeCard: React.FC<Props> = ({ card, onAction }) => {
         <div style={{
           padding: 8,
           background: data.execution_result.exit_code === 0 ? '#f6ffed' : '#fff2f0',
-          borderTop: '1px solid #e8e8e8',
+          borderTop: '1px solid var(--b-e8e8e8)',
         }}>
           <Space size={4} style={{ marginBottom: 4 }}>
             {data.execution_result.exit_code === 0

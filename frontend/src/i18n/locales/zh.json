@@ -430,6 +430,7 @@
   "agent_edit_tab_basic": "🪪 基本信息",
   "agent_edit_tab_soul": "🧬 专属 Soul",
   "agent_edit_tab_capability": "⚙️ 能力配置",
+  "agent_edit_tab_board": "📌 看板配置",
   "agent_edit_tab_notification": "📣 通知与沟通",
   "agent_edit_form_name": "Agent 名称",
   "agent_edit_form_base_type": "基础类型",

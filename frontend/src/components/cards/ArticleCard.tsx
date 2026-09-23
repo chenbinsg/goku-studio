@@ -57,7 +57,7 @@ const ArticleCard: React.FC<Props> = ({ card }) => {
   return (
     <Card
       size="small"
-      style={{ margin: '8px 0', border: '1px solid #e8e8e8', borderRadius: 8 }}
+      style={{ margin: '8px 0', border: '1px solid var(--b-e8e8e8)', borderRadius: 8 }}
       bodyStyle={{ padding: 0 }}
     >
       {/* Header */}
@@ -67,7 +67,7 @@ const ArticleCard: React.FC<Props> = ({ card }) => {
         justifyContent: 'space-between',
         padding: '10px 14px',
         background: 'linear-gradient(90deg, #f0f5ff 0%, #f9f0ff 100%)',
-        borderBottom: '1px solid #e8e8e8',
+        borderBottom: '1px solid var(--b-e8e8e8)',
         borderRadius: '8px 8px 0 0',
       }}>
         <Space size={8}>
@@ -97,17 +97,17 @@ const ArticleCard: React.FC<Props> = ({ card }) => {
         alignItems: 'center',
         gap: 12,
         padding: '6px 14px',
-        background: '#fafafa',
-        borderBottom: '1px solid #f0f0f0',
+        background: 'var(--s-fafafa)',
+        borderBottom: '1px solid var(--b-f0f0f0)',
         flexWrap: 'wrap',
       }}>
         <Tag color={tagColor} style={{ margin: 0 }}>{data.type_name}</Tag>
         <Space size={4}>
-          <ReadOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+          <ReadOutlined style={{ color: 'var(--t-8c8c8c)', fontSize: 12 }} />
           <Text type="secondary" style={{ fontSize: 12 }}>{data.word_count.toLocaleString()} {t('article_card_word_count')}</Text>
         </Space>
         <Space size={4}>
-          <ClockCircleOutlined style={{ color: '#8c8c8c', fontSize: 12 }} />
+          <ClockCircleOutlined style={{ color: 'var(--t-8c8c8c)', fontSize: 12 }} />
           <Text type="secondary" style={{ fontSize: 12 }}>约 {data.read_minutes} {t('article_card_read_time')}</Text>
         </Space>
         <Text type="secondary" style={{ fontSize: 12 }}>{t('article_card_duration')} {data.duration_s}s</Text>
@@ -125,7 +125,7 @@ const ArticleCard: React.FC<Props> = ({ card }) => {
             style={{
               fontSize: 14,
               lineHeight: 1.8,
-              color: '#262626',
+              color: 'var(--t-262626)',
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
             }}
@@ -139,7 +139,7 @@ const ArticleCard: React.FC<Props> = ({ card }) => {
             fontFamily: "'Consolas', 'Monaco', monospace",
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
-            color: '#595959',
+            color: 'var(--t-595959)',
             lineHeight: 1.7,
           }}>
             {data.content}

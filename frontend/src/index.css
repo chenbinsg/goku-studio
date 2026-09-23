@@ -1,3 +1,113 @@
+/* ── 主题色板 ──────────────────────────────────────────────────────────
+   夜间模式由 antd 的 darkAlgorithm 实现，但它只管 antd 组件；页面里手写
+   div 上的颜色它碰不到，于是夜间会留下白块，更糟的是浅底块上的字被 antd
+   调成了亮色，白字压浅底直接看不见。
+
+   这里把那些颜色收成变量：亮色值与原来写死的值逐个相同（白天零变化），
+   夜间由 [data-theme='dark'] 覆盖。新代码写内联背景/边框时用这些变量，
+   不要再写死 hex。--s-* 是面，--b-* 是边框，后缀是它的亮色值。
+   加新颜色时两个块都要加，亮色值填你本来要写的那个 hex —— 这样白天的观感
+   不变，夜间自动跟着切。 */
+:root {
+  --s-eef4ff: #eef4ff;
+  --s-f0f0f0: #f0f0f0;
+  --s-f0f5ff: #f0f5ff;
+  --s-f0f7ff: #f0f7ff;
+  --s-f1f5f9: #f1f5f9;
+  --s-f5f5f5: #f5f5f5;
+  --s-f6f8fb: #f6f8fb;
+  --s-f6ffed: #f6ffed;
+  --s-f8f9ff: #f8f9ff;
+  --s-f8faff: #f8faff;
+  --s-f9f9fb: #f9f9fb;
+  --s-fafafa: #fafafa;
+  --s-fafcff: #fafcff;
+  --s-fbfcfe: #fbfcfe;
+  --s-fdf4ff: #fdf4ff;
+  --s-fff2f0: #fff2f0;
+  --s-fffbe6: #fffbe6;
+  --s-ffffff: #ffffff;
+  --s-fff7e6: #fff7e6;
+  --s-f6f8fa: #f6f8fa;
+  --b-bae0ff: #bae0ff;
+  --b-d6e4ff: #d6e4ff;
+  --b-d9d9d9: #d9d9d9;
+  --b-e5e7eb: #e5e7eb;
+  --b-e8e8e8: #e8e8e8;
+  --b-e8eaf6: #e8eaf6;
+  --b-e8edf5: #e8edf5;
+  --b-e9d5ff: #e9d5ff;
+  --b-edf1f6: #edf1f6;
+  --b-eef1f5: #eef1f5;
+  --b-eef2f7: #eef2f7;
+  --b-f0f0f0: #f0f0f0;
+  --b-ffccc7: #ffccc7;
+  --b-ffffff: #ffffff;
+  --t-000000: #000000;
+  --t-24292f: #24292f;
+  --t-262626: #262626;
+  --t-333333: #333333;
+  --t-334155: #334155;
+  --t-444444: #444444;
+  --t-4b5563: #4b5563;
+  --t-595959: #595959;
+  --t-64748b: #64748b;
+  --t-666666: #666666;
+  --t-888888: #888888;
+  --t-8c8c8c: #8c8c8c;
+  --t-999999: #999999;
+}
+
+:root[data-theme='dark'] {
+  --s-eef4ff: rgba(19,96,236,0.16);
+  --s-f0f0f0: #262626;
+  --s-f0f5ff: rgba(19,91,236,0.16);
+  --s-f0f7ff: rgba(19,120,236,0.16);
+  --s-f1f5f9: #262626;
+  --s-f5f5f5: #262626;
+  --s-f6f8fb: #1f1f1f;
+  --s-f6ffed: rgba(128,236,19,0.16);
+  --s-f8f9ff: rgba(19,50,236,0.16);
+  --s-f8faff: rgba(19,81,236,0.16);
+  --s-f9f9fb: #1f1f1f;
+  --s-fafafa: #1f1f1f;
+  --s-fafcff: rgba(19,106,236,0.16);
+  --s-fbfcfe: #1f1f1f;
+  --s-fdf4ff: rgba(196,19,236,0.16);
+  --s-fff2f0: rgba(236,48,19,0.16);
+  --s-fffbe6: rgba(236,201,19,0.16);
+  --s-ffffff: #1f1f1f;
+  --s-fff7e6: rgba(236,167,19,0.16);
+  --s-f6f8fa: #1f1f1f;
+  --b-bae0ff: rgba(19,138,236,0.4);
+  --b-d6e4ff: rgba(19,93,236,0.4);
+  --b-d9d9d9: #434343;
+  --b-e5e7eb: #303030;
+  --b-e8e8e8: #303030;
+  --b-e8eaf6: #303030;
+  --b-e8edf5: #303030;
+  --b-e9d5ff: rgba(122,19,236,0.4);
+  --b-edf1f6: #303030;
+  --b-eef1f5: #303030;
+  --b-eef2f7: #303030;
+  --b-f0f0f0: #303030;
+  --b-ffccc7: rgba(236,38,19,0.4);
+  --b-ffffff: #303030;
+  --t-000000: rgba(255,255,255,0.88);
+  --t-24292f: rgba(255,255,255,0.88);
+  --t-262626: rgba(255,255,255,0.88);
+  --t-333333: rgba(255,255,255,0.88);
+  --t-334155: rgba(255,255,255,0.65);
+  --t-444444: rgba(255,255,255,0.65);
+  --t-4b5563: rgba(255,255,255,0.65);
+  --t-595959: rgba(255,255,255,0.65);
+  --t-64748b: rgba(255,255,255,0.45);
+  --t-666666: rgba(255,255,255,0.65);
+  --t-888888: rgba(255,255,255,0.45);
+  --t-8c8c8c: rgba(255,255,255,0.45);
+  --t-999999: rgba(255,255,255,0.45);
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -5,6 +115,7 @@
 }
 
 body {
+  background: var(--s-ffffff);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
@@ -26,7 +137,7 @@ body {
 }
 
 .ant-layout-header {
-  background: #fff;
+  background: var(--s-ffffff);
   padding: 0 24px;
   display: flex;
   align-items: center;
@@ -60,7 +171,7 @@ body {
 }
 
 .chart-container {
-  background: #fff;
+  background: var(--s-ffffff);
   padding: 24px;
   border-radius: 8px;
   margin-bottom: 24px;
@@ -77,14 +188,14 @@ body {
 }
 
 .search-form {
-  background: #fff;
+  background: var(--s-ffffff);
   padding: 24px;
   border-radius: 8px;
   margin-bottom: 24px;
 }
 
 .data-table {
-  background: #fff;
+  background: var(--s-ffffff);
   padding: 24px;
   border-radius: 8px;
 }
@@ -94,7 +205,7 @@ body {
 }
 
 .timeline-wrapper {
-  background: #fff;
+  background: var(--s-ffffff);
   padding: 24px;
   border-radius: 8px;
 }
@@ -112,7 +223,7 @@ body {
 }
 
 .code-block {
-  background: #f6f8fa;
+  background: var(--s-f6f8fa);
   padding: 16px;
   border-radius: 6px;
   font-family: 'Consolas', 'Monaco', monospace;

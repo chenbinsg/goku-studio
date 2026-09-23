@@ -194,8 +194,8 @@ const MessageReactions: React.FC<MessageReactionsProps> = ({ msgId, taskId, pare
             position: 'absolute',
             bottom: 'calc(100% + 8px)',
             left: 0,
-            background: '#fff',
-            border: '1px solid #e8e8e8',
+            background: 'var(--s-ffffff)',
+            border: '1px solid var(--b-e8e8e8)',
             borderRadius: 20,
             padding: '6px 10px',
             display: 'flex',
@@ -270,7 +270,7 @@ const TriggerButton: React.FC<{ onClick: () => void; active: boolean }> = ({ onC
       }}
     >
       <ReactionImg src="/icons/reactions/dianzan.png" size={18} />
-      <span style={{ fontSize: 11, color: '#888', lineHeight: 1 }}>+</span>
+      <span style={{ fontSize: 11, color: 'var(--t-888888)', lineHeight: 1 }}>+</span>
     </span>
   </Tooltip>
 )

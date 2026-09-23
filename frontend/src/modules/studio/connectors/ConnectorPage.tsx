@@ -276,7 +276,7 @@ const ConnectorPage: React.FC = () => {
         <Divider />
 
         <Title level={5}>{t('connector_page_usage_title')}</Title>
-        <ul style={{ paddingLeft: 20, color: '#666' }}>
+        <ul style={{ paddingLeft: 20, color: 'var(--t-666666)' }}>
           <li>
             <Text type="secondary">
               <b>{t('connector_page_feishu_msg_text')}</b>：{t('connector_page_feishu_text_desc')}

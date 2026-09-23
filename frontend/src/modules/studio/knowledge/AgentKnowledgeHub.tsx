@@ -227,7 +227,7 @@ const AgentKnowledgeHub: React.FC = () => {
       {/* ── How it works ── */}
       <Collapse
         size="small"
-        style={{ marginBottom: 20, background: '#fffbe6', border: '1px solid #ffe58f' }}
+        style={{ marginBottom: 20, background: 'var(--s-fffbe6)', border: '1px solid #ffe58f' }}
         items={[{
           key: '1',
           label: (
@@ -258,7 +258,7 @@ const AgentKnowledgeHub: React.FC = () => {
       {/* ── Stats row ── */}
       <Row gutter={12} style={{ marginBottom: 20, flexWrap: 'wrap' }}>
         <Col style={{ marginBottom: 8 }}>
-          <Card size="small" style={{ minWidth: 110, textAlign: 'center', background: '#f0f5ff', border: '1px solid #adc6ff' }}>
+          <Card size="small" style={{ minWidth: 110, textAlign: 'center', background: 'var(--s-f0f5ff)', border: '1px solid #adc6ff' }}>
             <Statistic title={t('knowledge_hub_total')} value={items.length} valueStyle={{ color: '#1677ff' }} />
           </Card>
         </Col>

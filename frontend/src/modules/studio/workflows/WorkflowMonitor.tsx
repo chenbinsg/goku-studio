@@ -37,8 +37,8 @@ import { useAuthStore } from '../../../stores/auth'
 const { Title, Text } = Typography
 
 const TRACE_PRE: React.CSSProperties = {
-  background: '#fafafa',
-  border: '1px solid #f0f0f0',
+  background: 'var(--s-fafafa)',
+  border: '1px solid var(--b-f0f0f0)',
   padding: 8,
   borderRadius: 4,
   fontSize: 11,
@@ -214,7 +214,7 @@ const WorkflowMonitor: React.FC = () => {
           ),
         },
         style: {
-          background: '#fff',
+          background: 'var(--s-ffffff)',
           border: `2px solid ${cfg.color}`,
           borderRadius: 8,
           padding: 8,
@@ -510,15 +510,15 @@ const WorkflowMonitor: React.FC = () => {
         height: '100vh',
         display: 'flex',
         flexDirection: 'column',
-        background: '#f5f5f5',
+        background: 'var(--s-f5f5f5)',
       }}
     >
       {/* Header */}
       <div
         style={{
-          background: '#fff',
+          background: 'var(--s-ffffff)',
           padding: '12px 24px',
-          borderBottom: '1px solid #f0f0f0',
+          borderBottom: '1px solid var(--b-f0f0f0)',
           display: 'flex',
           alignItems: 'center',
           gap: 16,
@@ -695,7 +695,7 @@ const WorkflowMonitor: React.FC = () => {
                 <Text strong>{t('workflow_monitor_output_label')}</Text>
                 <pre
                   style={{
-                    background: '#f5f5f5',
+                    background: 'var(--s-f5f5f5)',
                     padding: 12,
                     borderRadius: 4,
                     fontSize: 12,

@@ -69,9 +69,11 @@ const highlight = (content: string, findings: SkillFinding[]) => {
   spans.forEach((m, i) => {
     if (m.start < cursor) return          // overlapping hits: keep the first
     if (m.start > cursor) out.push(content.slice(cursor, m.start))
+    // 高亮块两种主题下都是浅黄，所以字色必须写死成深色：夜间 antd 会把继承来的
+    // 字调亮，白字压浅黄等于看不见。
     out.push(
       <mark key={i} title={m.label || m.kind}
-        style={{ background: '#ffe58f', padding: '0 2px', borderRadius: 2 }}>
+        style={{ background: '#ffe58f', color: '#262626', padding: '0 2px', borderRadius: 2 }}>
         {content.slice(m.start, m.end)}
       </mark>,
     )
@@ -844,7 +846,7 @@ const SkillLibrary: React.FC = () => {
               fit a table cell and was never meant to. No fallback when it is
               empty: a blank here is how you find the rows still to write. */}
           {r.summary && (
-            <Text type="secondary" style={{ fontSize: 12, color: '#4b5563' }}>{r.summary}</Text>
+            <Text type="secondary" style={{ fontSize: 12, color: 'var(--t-4b5563)' }}>{r.summary}</Text>
           )}
         </Space>
       ),
@@ -1249,7 +1251,7 @@ const SkillLibrary: React.FC = () => {
                 {t('skill_lib_field_auto', '允许自动注入')}
                 <Tooltip title={t('skill_lib_auto_help',
                   '打开后,不经绑定即可注入所有接受自动注入的 agent')}>
-                  <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                  <QuestionCircleOutlined style={{ color: 'var(--t-8c8c8c)' }} />
                 </Tooltip>
               </Space>
             }
@@ -1270,7 +1272,7 @@ const SkillLibrary: React.FC = () => {
                 {t('skill_lib_field_tags', '标签')}
                 <Tooltip title={t('skill_lib_tags_help',
                   '只用于本页检索,不进提示词。逗号分隔')}>
-                  <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                  <QuestionCircleOutlined style={{ color: 'var(--t-8c8c8c)' }} />
                 </Tooltip>
               </Space>
             }
@@ -1285,7 +1287,7 @@ const SkillLibrary: React.FC = () => {
                 {t('skill_lib_field_desc', '描述')}
                 <Tooltip title={t('skill_lib_desc_help',
                   '随技能一起进入提示词,模型据此判断何时按它执行')}>
-                  <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                  <QuestionCircleOutlined style={{ color: 'var(--t-8c8c8c)' }} />
                 </Tooltip>
               </Space>
             }
@@ -1300,7 +1302,7 @@ const SkillLibrary: React.FC = () => {
                 {t('skill_lib_field_seq', '工具顺序约束')}
                 <Tooltip title={t('skill_lib_seq_help',
                   '规定第几步必须调用哪个工具,留空表示不限制')}>
-                  <QuestionCircleOutlined style={{ color: '#8c8c8c' }} />
+                  <QuestionCircleOutlined style={{ color: 'var(--t-8c8c8c)' }} />
                 </Tooltip>
               </Space>
             }

@@ -154,7 +154,7 @@ const ProgramResultCard: React.FC<Props> = ({ card, onAction }) => {
   return (
     <Card
       size="small"
-      style={{ margin: '8px 0', border: '1px solid #e8e8e8', borderRadius: 8 }}
+      style={{ margin: '8px 0', border: '1px solid var(--b-e8e8e8)', borderRadius: 8 }}
       bodyStyle={{ padding: 0 }}
     >
       {/* Header */}
@@ -164,7 +164,7 @@ const ProgramResultCard: React.FC<Props> = ({ card, onAction }) => {
         justifyContent: 'space-between',
         padding: '10px 14px',
         background: 'linear-gradient(90deg, #f6ffed 0%, #e6f7ff 100%)',
-        borderBottom: '1px solid #e8e8e8',
+        borderBottom: '1px solid var(--b-e8e8e8)',
         borderRadius: '8px 8px 0 0',
       }}>
         <Space size={8}>
@@ -186,8 +186,8 @@ const ProgramResultCard: React.FC<Props> = ({ card, onAction }) => {
       {/* Meta bar */}
       <div style={{
         padding: '6px 14px',
-        background: '#fafafa',
-        borderBottom: '1px solid #f0f0f0',
+        background: 'var(--s-fafafa)',
+        borderBottom: '1px solid var(--b-f0f0f0)',
       }}>
         <Space size={12} wrap>
           <Text type="secondary" style={{ fontSize: 12 }}>
@@ -197,7 +197,7 @@ const ProgramResultCard: React.FC<Props> = ({ card, onAction }) => {
           <Tag>{data.total_lines.toLocaleString()} {t('program_card_line_count')}</Tag>
           <Text type="secondary" style={{ fontSize: 12 }}>{t('program_card_duration_label')} {data.duration_s}s</Text>
           <Text type="secondary" style={{ fontSize: 12 }}>
-            {t('program_card_run_command_label')}：<code style={{ fontSize: 11, background: '#f5f5f5', padding: '1px 4px', borderRadius: 3 }}>
+            {t('program_card_run_command_label')}：<code style={{ fontSize: 11, background: 'var(--s-f5f5f5)', padding: '1px 4px', borderRadius: 3 }}>
               {data.run_cmd}
             </code>
           </Text>
@@ -206,7 +206,7 @@ const ProgramResultCard: React.FC<Props> = ({ card, onAction }) => {
 
       {/* Execution result (if available) */}
       {data.exec_result && !data.exec_result.skipped && (
-        <div style={{ padding: '8px 14px', borderBottom: '1px solid #f0f0f0' }}>
+        <div style={{ padding: '8px 14px', borderBottom: '1px solid var(--b-f0f0f0)' }}>
           <Alert
             type={data.exec_result.success ? 'success' : 'warning'}
             showIcon
@@ -235,7 +235,7 @@ const ProgramResultCard: React.FC<Props> = ({ card, onAction }) => {
         {/* Left: file tree */}
         <div style={{
           width: 180,
-          borderRight: '1px solid #f0f0f0',
+          borderRight: '1px solid var(--b-f0f0f0)',
           padding: '8px 4px',
           overflowY: 'auto',
           flexShrink: 0,

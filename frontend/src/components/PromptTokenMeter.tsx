@@ -90,10 +90,10 @@ interface StatusInfo {
 }
 
 function getStatus(tokens: number, cfg: TokenBudgetConfig): StatusInfo {
-  if (tokens <= cfg.optimal)  return { color: '#52c41a', bgColor: '#f6ffed', borderColor: '#b7eb8f', emoji: '🟢', labelKey: 'token_meter_level_optimal' }
-  if (tokens <= cfg.moderate) return { color: '#fadb14', bgColor: '#fffbe6', borderColor: '#ffe58f', emoji: '🟡', labelKey: 'token_meter_level_moderate' }
-  if (tokens <= cfg.tight)    return { color: '#fa8c16', bgColor: '#fff7e6', borderColor: '#ffd591', emoji: '🟠', labelKey: 'token_meter_level_tight' }
-  return                             { color: '#ff4d4f', bgColor: '#fff2f0', borderColor: '#ffccc7', emoji: '🔴', labelKey: 'token_meter_level_critical' }
+  if (tokens <= cfg.optimal)  return { color: '#52c41a', bgColor: 'var(--s-f6ffed)', borderColor: '#b7eb8f', emoji: '🟢', labelKey: 'token_meter_level_optimal' }
+  if (tokens <= cfg.moderate) return { color: '#fadb14', bgColor: 'var(--s-fffbe6)', borderColor: '#ffe58f', emoji: '🟡', labelKey: 'token_meter_level_moderate' }
+  if (tokens <= cfg.tight)    return { color: '#fa8c16', bgColor: 'var(--s-fff7e6)', borderColor: '#ffd591', emoji: '🟠', labelKey: 'token_meter_level_tight' }
+  return                             { color: '#ff4d4f', bgColor: 'var(--s-fff2f0)', borderColor: 'var(--b-ffccc7)', emoji: '🔴', labelKey: 'token_meter_level_critical' }
 }
 
 // ── Optimize API ──────────────────────────────────────────────────────────────
@@ -182,7 +182,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
           {t('token_meter_english_equiv', { n: stats.englishEquivChars })}
         </div>
       )}
-      <div style={{ marginTop: 6, color: '#8c8c8c' }}>
+      <div style={{ marginTop: 6, color: 'var(--t-8c8c8c)' }}>
         🟢≤{budget.optimal} 🟡≤{budget.moderate} 🟠≤{budget.tight} 🔴&gt;{budget.tight}
       </div>
     </div>
@@ -204,7 +204,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
         }}
       >
         {/* Progress bar */}
-        <div style={{ height: 5, background: '#f0f0f0', position: 'relative' }}>
+        <div style={{ height: 5, background: 'var(--s-f0f0f0)', position: 'relative' }}>
           <div style={{
             position: 'absolute', left: 0, top: 0, height: '100%',
             width: `${fillPct}%`,
@@ -224,7 +224,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
         <div style={{
           display: 'flex', alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '3px 10px 4px', fontSize: 11, color: '#595959', gap: 8,
+          padding: '3px 10px 4px', fontSize: 11, color: 'var(--t-595959)', gap: 8,
         }}>
           {/* Left: status + label */}
           <Tooltip title={tooltipContent} placement="topLeft">
@@ -234,7 +234,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
                 {t(status.labelKey)}
               </span>
               {budget.label && (
-                <span style={{ marginLeft: 6, color: '#8c8c8c' }}>· {budget.label}</span>
+                <span style={{ marginLeft: 6, color: 'var(--t-8c8c8c)' }}>· {budget.label}</span>
               )}
             </span>
           </Tooltip>
@@ -243,10 +243,10 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
           <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
             <span>
               <span style={{ color: status.color, fontWeight: 700 }}>{stats.estimatedTokens}</span>
-              <span style={{ color: '#8c8c8c' }}>/{budget.max} tok</span>
+              <span style={{ color: 'var(--t-8c8c8c)' }}>/{budget.max} tok</span>
             </span>
             {showEquivalence && stats.cjkChars > 0 && stats.chars > 0 && (
-              <span style={{ color: '#8c8c8c', borderLeft: '1px solid #d9d9d9', paddingLeft: 10 }}>
+              <span style={{ color: 'var(--t-8c8c8c)', borderLeft: '1px solid var(--b-d9d9d9)', paddingLeft: 10 }}>
                 EN equiv ~{stats.englishEquivChars} chars
               </span>
             )}
@@ -296,7 +296,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
         {optimizing && (
           <div style={{ textAlign: 'center', padding: '40px 0' }}>
             <Spin size="large" />
-            <div style={{ marginTop: 12, color: '#8c8c8c', fontSize: 13 }}>
+            <div style={{ marginTop: 12, color: 'var(--t-8c8c8c)', fontSize: 13 }}>
               {t('token_meter_optimizing')}
             </div>
           </div>
@@ -308,7 +308,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
             <div style={{
               display: 'flex', gap: 16, marginBottom: 16,
               padding: '10px 14px',
-              background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8,
+              background: 'var(--s-f6ffed)', border: '1px solid #b7eb8f', borderRadius: 8,
               fontSize: 12,
             }}>
               <span>
@@ -333,7 +333,7 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
             {/* Two-column diff view */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: '#8c8c8c' }}>
+                <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6, color: 'var(--t-8c8c8c)' }}>
                   {t('token_meter_tab_original')}
                 </div>
                 <textarea
@@ -342,9 +342,9 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
                   rows={16}
                   style={{
                     width: '100%', fontFamily: 'monospace', fontSize: 12,
-                    padding: 10, border: '1px solid #ffccc7', borderRadius: 6,
-                    background: '#fff2f0', resize: 'none', lineHeight: 1.6,
-                    color: '#595959',
+                    padding: 10, border: '1px solid var(--b-ffccc7)', borderRadius: 6,
+                    background: 'var(--s-fff2f0)', resize: 'none', lineHeight: 1.6,
+                    color: 'var(--t-595959)',
                   }}
                 />
               </div>
@@ -359,14 +359,14 @@ const PromptTokenMeter: React.FC<PromptTokenMeterProps> = ({
                   style={{
                     width: '100%', fontFamily: 'monospace', fontSize: 12,
                     padding: 10, border: '1px solid #b7eb8f', borderRadius: 6,
-                    background: '#f6ffed', resize: 'none', lineHeight: 1.6,
-                    color: '#262626',
+                    background: 'var(--s-f6ffed)', resize: 'none', lineHeight: 1.6,
+                    color: 'var(--t-262626)',
                   }}
                 />
               </div>
             </div>
 
-            <div style={{ marginTop: 10, fontSize: 12, color: '#8c8c8c' }}>
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--t-8c8c8c)' }}>
               {t('token_meter_adopt_hint')}
             </div>
           </div>

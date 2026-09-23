@@ -67,7 +67,7 @@ const ImageGalleryCard: React.FC<Props> = ({ card, onAction }) => {
     <>
       <Card
         size="small"
-        style={{ margin: '8px 0', border: '1px solid #e8e8e8', borderRadius: 8 }}
+        style={{ margin: '8px 0', border: '1px solid var(--b-e8e8e8)', borderRadius: 8 }}
         bodyStyle={{ padding: 0 }}
       >
         {/* Header */}
@@ -77,7 +77,7 @@ const ImageGalleryCard: React.FC<Props> = ({ card, onAction }) => {
           justifyContent: 'space-between',
           padding: '10px 14px',
           background: 'linear-gradient(90deg, #fff7e6 0%, #fffbe6 100%)',
-          borderBottom: '1px solid #e8e8e8',
+          borderBottom: '1px solid var(--b-e8e8e8)',
           borderRadius: '8px 8px 0 0',
         }}>
           <Space size={8}>
@@ -108,8 +108,8 @@ const ImageGalleryCard: React.FC<Props> = ({ card, onAction }) => {
         {/* Prompt info */}
         <div style={{
           padding: '6px 14px',
-          background: '#fafafa',
-          borderBottom: '1px solid #f0f0f0',
+          background: 'var(--s-fafafa)',
+          borderBottom: '1px solid var(--b-f0f0f0)',
         }}>
           <Space size={8} wrap>
             <Text type="secondary" style={{ fontSize: 12 }}>
@@ -145,7 +145,7 @@ const ImageGalleryCard: React.FC<Props> = ({ card, onAction }) => {
                   borderRadius: 6,
                   cursor: 'zoom-in',
                   objectFit: 'contain',
-                  border: '1px solid #f0f0f0',
+                  border: '1px solid var(--b-f0f0f0)',
                 }}
                 onClick={() => setPreview(current)}
               />

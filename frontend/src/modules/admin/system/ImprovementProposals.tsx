@@ -273,7 +273,7 @@ const ImprovementProposals: React.FC = () => {
 
             <div style={{ marginBottom: 12 }}>
               <Text strong>分析摘要</Text>
-              <Paragraph style={{ marginTop: 6, whiteSpace: 'pre-wrap', background: '#fafafa', padding: '10px 12px', borderRadius: 6 }}>
+              <Paragraph style={{ marginTop: 6, whiteSpace: 'pre-wrap', background: 'var(--s-fafafa)', padding: '10px 12px', borderRadius: 6 }}>
                 {selected.analysis_summary}
               </Paragraph>
             </div>
@@ -281,7 +281,7 @@ const ImprovementProposals: React.FC = () => {
             {selected.payload && Object.keys(selected.payload).length > 0 && (
               <div>
                 <Text strong>Payload</Text>
-                <pre style={{ marginTop: 6, fontSize: 11, background: '#f5f5f5', padding: '10px 12px', borderRadius: 6, overflowX: 'auto' }}>
+                <pre style={{ marginTop: 6, fontSize: 11, background: 'var(--s-f5f5f5)', padding: '10px 12px', borderRadius: 6, overflowX: 'auto' }}>
                   {JSON.stringify(selected.payload, null, 2)}
                 </pre>
               </div>

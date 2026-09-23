@@ -171,7 +171,7 @@ export default function ExternalSources() {
       render: (name, row) => (
         <Space>
           {row.provider === 'notion'
-            ? <LinkOutlined style={{ color: '#000' }} />
+            ? <LinkOutlined style={{ color: 'var(--t-000000)' }} />
             : <FolderOpenOutlined style={{ color: '#8b5cf6' }} />}
           <Text strong>{name}</Text>
         </Space>

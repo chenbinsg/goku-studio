@@ -48,6 +48,7 @@ import {
 import { agentApi, agentInstanceApi, agentPoliciesApi, departmentApi, orgTeamsApi, api, AgentTypeStatus, type AgentEmailConfig } from '@/api'
 import AgentInstancePanel from '@/components/AgentInstancePanel'
 import PromptTokenMeter, { AGENT_PROMPT_BUDGET } from '@/components/PromptTokenMeter'
+import BoardPublishFields, { fromBoardPublish, toBoardPublish } from './BoardPublishFields'
 import { useAuthStore } from '@/stores/auth'
 import { useTranslation } from 'react-i18next'
 import { getAgentName, type LangCode } from '@/i18n'
@@ -683,6 +684,7 @@ const AgentList: React.FC = () => {
       can_host_meeting: agent.can_host_meeting || false,
       can_join_meeting: agent.can_join_meeting || false,
       collaboration_description: agent.collaboration_description || '',
+      ...fromBoardPublish((agent as any).board_publish),
     })
     // Reset email config to defaults immediately so the tab never shows stale data
     // from a previously edited agent while the async fetch is in-flight (or if it fails).
@@ -940,6 +942,12 @@ const AgentList: React.FC = () => {
       values.escalation_contact = values.escalation_contact_target
         ? { type: values.escalation_contact_type || 'email', target: values.escalation_contact_target }
         : null
+      // 看板发布：表单里是扁平字段，后端要的是一列 JSON。收完之后把临时字段删掉，
+      // 否则它们会作为未知字段发上去（后端忽略，但白噪声会让排查变难）。
+      values.board_publish = toBoardPublish(values)
+      Object.keys(values).forEach((k) => {
+        if (k.startsWith('board_publish_')) delete (values as Record<string, unknown>)[k]
+      })
       if (editingId) {
         await agentApi.update(editingId, values)
         // Fire email config save without blocking the modal close — it's non-critical
@@ -1034,7 +1042,7 @@ const AgentList: React.FC = () => {
   }
 
   return (
-    <div style={{ padding: '4px 24px 24px', minHeight: '100vh', background: '#f6f8fb' }}>
+    <div style={{ padding: '4px 24px 24px', minHeight: '100vh', background: 'var(--s-f6f8fb)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: 24, gap: 16, flexWrap: 'wrap' }}>
         <div>
           <Title level={4} style={{ margin: 0 }}>
@@ -1095,9 +1103,9 @@ const AgentList: React.FC = () => {
               <section
                 key={group.division}
                 style={{
-                  background: '#fff',
+                  background: 'var(--s-ffffff)',
                   borderRadius: 14,
-                  border: '1px solid #edf1f6',
+                  border: '1px solid var(--b-edf1f6)',
                   padding: 14,
                   boxShadow: '0 2px 10px rgba(15, 23, 42, 0.035)',
                 }}
@@ -1111,7 +1119,7 @@ const AgentList: React.FC = () => {
                     <Space size={8}>
                       <Avatar
                         size={32}
-                        style={{ background: '#eef4ff', color: '#4f46e5' }}
+                        style={{ background: 'var(--s-eef4ff)', color: '#4f46e5' }}
                         icon={<ApartmentOutlined />}
                       />
                       <div style={{ textAlign: 'left' }}>
@@ -1136,7 +1144,7 @@ const AgentList: React.FC = () => {
                         style={{ padding: '0 2px', height: 'auto', marginBottom: 8 }}
                       >
                         <div style={{ display: 'flex', alignItems: 'center' }}>
-                          <Text strong style={{ fontSize: 12, color: '#334155' }}>
+                          <Text strong style={{ fontSize: 12, color: 'var(--t-334155)' }}>
                             {collapsedDepartments[`${group.division}::${departmentGroup.department}`] ? <RightOutlined style={{ fontSize: 10, marginRight: 6 }} /> : <DownOutlined style={{ fontSize: 10, marginRight: 6 }} />}
                             {departmentGroup.department}
                           </Text>
@@ -1197,6 +1205,8 @@ const AgentList: React.FC = () => {
           <Tabs
             defaultActiveKey="profile"
             size="small"
+            // 标签有七八个，默认 32px 间距会把后面几个挤进「…」折叠菜单
+            tabBarGutter={16}
             items={[
               {
                 key: 'profile',
@@ -1470,6 +1480,7 @@ const AgentList: React.FC = () => {
                       }}
                     </Form.Item>
 
+
                     <Form.Item label={t('agent_edit_form_figure')}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
                         <Form.Item noStyle name="figure_url">
@@ -1484,7 +1495,7 @@ const AgentList: React.FC = () => {
                                   key={figureUrl || '__empty__'}
                                   size={72}
                                   src={figureUrl || undefined}
-                                  style={{ background: '#f1f5f9', color: '#64748b', flexShrink: 0 }}
+                                  style={{ background: 'var(--s-f1f5f9)', color: 'var(--t-64748b)', flexShrink: 0 }}
                                   icon={!figureUrl ? <PictureOutlined /> : undefined}
                                 />
                                 <Space direction="vertical" size={6} style={{ flex: 1, minWidth: 200 }}>
@@ -1511,7 +1522,7 @@ const AgentList: React.FC = () => {
                                     placeholder={t('agent_edit_figure_path_placeholder')}
                                     value={figureUrl || ''}
                                     onChange={(e) => form.setFieldValue('figure_url', e.target.value || undefined)}
-                                    style={{ fontSize: 12, color: '#64748b' }}
+                                    style={{ fontSize: 12, color: 'var(--t-64748b)' }}
                                   />
                                 </Space>
                               </>
@@ -1541,8 +1552,8 @@ const AgentList: React.FC = () => {
                   <div style={{ paddingTop: 8 }}>
                     <div
                       style={{
-                        background: '#f0f7ff',
-                        border: '1px solid #bae0ff',
+                        background: 'var(--s-f0f7ff)',
+                        border: '1px solid var(--b-bae0ff)',
                         borderRadius: 8,
                         padding: '10px 14px',
                         marginBottom: 16,
@@ -1675,9 +1686,9 @@ const AgentList: React.FC = () => {
                               marginTop: -12,
                               marginBottom: 16,
                               padding: 10,
-                              border: '1px solid #eef1f5',
+                              border: '1px solid var(--b-eef1f5)',
                               borderRadius: 8,
-                              background: '#fafcff',
+                              background: 'var(--s-fafcff)',
                             }}
                           >
                             <div style={{ marginTop: 4, display: 'grid', gap: 8 }}>
@@ -1687,8 +1698,8 @@ const AgentList: React.FC = () => {
                                     <Tag color="blue" style={{ marginBottom: 4 }}>{skill.name || skill.code}</Tag>
                                     <Button type="link" size="small" style={{ padding: 0, height: 'auto' }} onClick={() => openSkillContent(skill)}>查看</Button>
                                   </Space>
-                                  <div style={{ fontSize: 12, color: '#666', lineHeight: 1.5 }}>{skill.description}</div>
-                                  <div style={{ fontSize: 11, color: '#999', marginTop: 2 }}>{skill.path}</div>
+                                  <div style={{ fontSize: 12, color: 'var(--t-666666)', lineHeight: 1.5 }}>{skill.description}</div>
+                                  <div style={{ fontSize: 11, color: 'var(--t-999999)', marginTop: 2 }}>{skill.path}</div>
                                 </div>
                               ))}
                             </div>
@@ -1722,7 +1733,7 @@ const AgentList: React.FC = () => {
                       {skillViewLoading ? (
                         <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
                       ) : (
-                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '70vh', overflow: 'auto', fontSize: 12, lineHeight: 1.6, background: '#fafafa', padding: 12, borderRadius: 6, margin: 0 }}>
+                        <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', maxHeight: '70vh', overflow: 'auto', fontSize: 12, lineHeight: 1.6, background: 'var(--s-fafafa)', padding: 12, borderRadius: 6, margin: 0 }}>
                           {skillView?.content}
                         </pre>
                       )}
@@ -1844,20 +1855,20 @@ const AgentList: React.FC = () => {
                       </Form.Item>
 
                       {editingId && (
-                        <div style={{ marginBottom: 16, padding: '10px 12px', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+                        <div style={{ marginBottom: 16, padding: '10px 12px', border: '1px solid var(--b-f0f0f0)', borderRadius: 6 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                             <strong>{t('agent_perm_title')}</strong>
                             <Button size="small" loading={permLoading} onClick={() => fetchPermissionCheck(editingId)}>
                               {t('agent_perm_refresh')}
                             </Button>
                           </div>
-                          <div style={{ color: '#888', fontSize: 12, marginBottom: 8 }}>{t('agent_perm_hint')}</div>
+                          <div style={{ color: 'var(--t-888888)', fontSize: 12, marginBottom: 8 }}>{t('agent_perm_hint')}</div>
                           {!permCheck || permCheck.items.length === 0 ? (
-                            <div style={{ color: '#888', fontSize: 12 }}>{t('agent_perm_empty')}</div>
+                            <div style={{ color: 'var(--t-888888)', fontSize: 12 }}>{t('agent_perm_empty')}</div>
                           ) : permCheck.items.map(item => (
                             <div
                               key={item.tool}
-                              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px dashed #f0f0f0' }}
+                              style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', borderTop: '1px dashed var(--b-f0f0f0)' }}
                             >
                               <div style={{ flex: 1, minWidth: 0 }}>
                                 <code style={{ fontSize: 12, wordBreak: 'break-all' }}>{item.tool}</code>
@@ -1901,6 +1912,18 @@ const AgentList: React.FC = () => {
                 ),
               },
               {
+                key: 'board',
+                // 单独一页：这几项和「基本信息」是不同一件事，挤在第一页会把
+                // 本来就长的那一屏又拉长一截。文案走 i18n 且带图标，跟其它 tab
+                // 一致 —— 少个图标、名字长两个字，后面的标签就被挤进「…」了。
+                label: t('agent_edit_tab_board'),
+                children: (
+                  <div style={{ paddingTop: 8, maxWidth: 560 }}>
+                    <BoardPublishFields api={api} />
+                  </div>
+                ),
+              },
+              {
                 key: 'comms',
                 label: t('agent_edit_tab_notification'),
                 children: (
@@ -1931,7 +1954,7 @@ const AgentList: React.FC = () => {
                         const channels: string[] = getFieldValue('allowed_channels') || []
                         if (!channels.includes('feishu') && !channels.includes('teams')) return null
                         return (
-                          <div style={{ background: '#f8f9ff', borderRadius: 8, padding: '12px 16px', marginBottom: 16, border: '1px solid #e8eaf6' }}>
+                          <div style={{ background: 'var(--s-f8f9ff)', borderRadius: 8, padding: '12px 16px', marginBottom: 16, border: '1px solid var(--b-e8eaf6)' }}>
                             <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>{t('agent_edit_channel_webhook_title')}</Text>
                             {channels.includes('feishu') && (
                               <Form.Item
@@ -2054,7 +2077,7 @@ const AgentList: React.FC = () => {
                         </div>
                         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
                           <thead>
-                            <tr style={{ background: '#fafafa', borderBottom: '1px solid #f0f0f0' }}>
+                            <tr style={{ background: 'var(--s-fafafa)', borderBottom: '1px solid var(--b-f0f0f0)' }}>
                               <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>{t('agent_policy_col_principal_type')}</th>
                               <th style={{ padding: '6px 8px', textAlign: 'left', fontWeight: 500 }}>{t('agent_policy_col_principal_id')}</th>
                               <th style={{ padding: '6px 8px', textAlign: 'center', fontWeight: 500 }}>{t('agent_policy_col_view')}</th>
@@ -2074,7 +2097,7 @@ const AgentList: React.FC = () => {
                                 {t('agent_policy_empty')}
                               </td></tr>
                             ) : policies.map((p: any) => (
-                              <tr key={p.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
+                              <tr key={p.id} style={{ borderBottom: '1px solid var(--b-f0f0f0)' }}>
                                 <td style={{ padding: '6px 8px' }}>
                                   <Tag color={
                                     p.principal_type === 'user' ? 'blue' :
@@ -2113,7 +2136,7 @@ const AgentList: React.FC = () => {
                                 <td style={{ padding: '6px 8px', textAlign: 'center' }}>
                                   <Tag color={p.can_config ? 'orange' : 'default'}>{p.can_config ? '✓' : '✗'}</Tag>
                                 </td>
-                                <td style={{ padding: '6px 8px', fontSize: 11, color: '#888' }}>
+                                <td style={{ padding: '6px 8px', fontSize: 11, color: 'var(--t-888888)' }}>
                                   {p.expires_at
                                     ? new Date(p.expires_at).toLocaleDateString(lang === 'ja' ? 'ja-JP' : lang === 'en' ? 'en-US' : 'zh-CN')
                                     : t('agent_policy_permanent')}
@@ -2378,13 +2401,13 @@ const AgentList: React.FC = () => {
                   alt={aname(selectedAgent)}
                   width={96}
                   height={96}
-                  style={{ objectFit: 'cover', borderRadius: 16, border: '1px solid #eef2f7' }}
+                  style={{ objectFit: 'cover', borderRadius: 16, border: '1px solid var(--b-eef2f7)' }}
                   preview={false}
                 />
               </div>
             )}
             {selectedAgent.description && (
-              <p style={{ color: '#666', marginBottom: 20 }}>{selectedAgent.description}</p>
+              <p style={{ color: 'var(--t-666666)', marginBottom: 20 }}>{selectedAgent.description}</p>
             )}
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 20 }}>
@@ -2448,8 +2471,8 @@ const AgentList: React.FC = () => {
                 </Space>
                 <div
                   style={{
-                    background: '#fdf4ff',
-                    border: '1px solid #e9d5ff',
+                    background: 'var(--s-fdf4ff)',
+                    border: '1px solid var(--b-e9d5ff)',
                     padding: 10,
                     borderRadius: 6,
                     marginTop: 4,
@@ -2457,7 +2480,7 @@ const AgentList: React.FC = () => {
                     fontSize: 12,
                     maxHeight: 180,
                     overflow: 'auto',
-                    color: '#444',
+                    color: 'var(--t-444444)',
                     fontFamily: 'monospace',
                   }}
                 >
@@ -2726,8 +2749,8 @@ function AgentTile({
     <div
       style={{
         borderRadius: 12,
-        border: '1px solid #eef2f7',
-        background: '#fbfcfe',
+        border: '1px solid var(--b-eef2f7)',
+        background: 'var(--s-fbfcfe)',
         padding: 10,
         display: 'flex',
         flexDirection: 'column',
@@ -2821,11 +2844,11 @@ function AgentTile({
 
 function StatBox({ icon, label, value }: { icon: string; label: string; value: string }) {
   return (
-    <div style={{ background: '#f9f9fb', borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
+    <div style={{ background: 'var(--s-f9f9fb)', borderRadius: 10, padding: '12px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
       <span style={{ fontSize: 20 }}>{icon}</span>
       <div>
-        <div style={{ fontSize: 11, color: '#999' }}>{label}</div>
-        <div style={{ fontWeight: 600, fontSize: 14, color: '#333', wordBreak: 'break-word' }}>{value}</div>
+        <div style={{ fontSize: 11, color: 'var(--t-999999)' }}>{label}</div>
+        <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--t-333333)', wordBreak: 'break-word' }}>{value}</div>
       </div>
     </div>
   )

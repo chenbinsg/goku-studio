@@ -52,7 +52,7 @@ const VideoResultCard: React.FC<Props> = ({ card, onAction }) => {
   return (
     <Card
       size="small"
-      style={{ margin: '8px 0', border: '1px solid #e8e8e8', borderRadius: 8 }}
+      style={{ margin: '8px 0', border: '1px solid var(--b-e8e8e8)', borderRadius: 8 }}
       bodyStyle={{ padding: 0 }}
     >
       {/* Header */}
@@ -62,7 +62,7 @@ const VideoResultCard: React.FC<Props> = ({ card, onAction }) => {
         justifyContent: 'space-between',
         padding: '10px 14px',
         background: 'linear-gradient(90deg, #fff1f0 0%, #f0f5ff 100%)',
-        borderBottom: '1px solid #e8e8e8',
+        borderBottom: '1px solid var(--b-e8e8e8)',
         borderRadius: '8px 8px 0 0',
       }}>
         <Space size={8}>
@@ -123,8 +123,8 @@ const VideoResultCard: React.FC<Props> = ({ card, onAction }) => {
           {/* Prompt info */}
           <div style={{
             padding: '6px 14px',
-            background: '#fafafa',
-            borderBottom: '1px solid #f0f0f0',
+            background: 'var(--s-fafafa)',
+            borderBottom: '1px solid var(--b-f0f0f0)',
           }}>
             <Space size={8} wrap>
               <Text type="secondary" style={{ fontSize: 12 }}>

@@ -54,7 +54,7 @@ const ScoringProgress: React.FC = () => {
 
   return (
     <div style={{
-      background: '#f0f5ff', border: '1px solid #d6e4ff',
+      background: 'var(--s-f0f5ff)', border: '1px solid var(--b-d6e4ff)',
       borderRadius: 8, padding: '12px 14px', marginTop: 8,
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
@@ -125,8 +125,8 @@ const PRDScoreResult: React.FC<{ result: any }> = ({ result }) => {
       {/* Total score header */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12,
-        padding: '10px 14px', background: '#fafafa',
-        border: '1px solid #f0f0f0', borderRadius: 8, marginBottom: 10,
+        padding: '10px 14px', background: 'var(--s-fafafa)',
+        border: '1px solid var(--b-f0f0f0)', borderRadius: 8, marginBottom: 10,
       }}>
         <span style={{ fontSize: 36, fontWeight: 700, lineHeight: 1, color: scoreColor(total) }}>
           {total.toFixed(1)}
@@ -177,7 +177,7 @@ const PRDScoreResult: React.FC<{ result: any }> = ({ result }) => {
       {result.top_improvements?.length > 0 && (
         <div style={{
           marginTop: 8, padding: '8px 12px',
-          background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 6,
+          background: 'var(--s-f0f5ff)', border: '1px solid var(--b-d6e4ff)', borderRadius: 6,
         }}>
           <Typography.Text strong style={{ fontSize: 12, color: '#1890ff', display: 'block', marginBottom: 4 }}>
             {t('tool_card_prd_top_improvements')}
@@ -185,7 +185,7 @@ const PRDScoreResult: React.FC<{ result: any }> = ({ result }) => {
           {result.top_improvements.map((imp: string, i: number) => (
             <div key={i} style={{ display: 'flex', gap: 6, fontSize: 11, padding: '2px 0' }}>
               <span style={{ flexShrink: 0, color: '#1890ff' }}>{i + 1}.</span>
-              <span style={{ color: '#333' }}>{imp}</span>
+              <span style={{ color: 'var(--t-333333)' }}>{imp}</span>
             </div>
           ))}
         </div>
@@ -239,7 +239,7 @@ const ToolExecutionCard: React.FC<Props> = ({ card, onAction }) => {
           {showParams ? t('tool_card_hide_params') : t('tool_card_show_params')}
         </Typography.Link>
         {showParams && (
-          <pre style={{ fontSize: 12, background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>
+          <pre style={{ fontSize: 12, background: 'var(--s-f5f5f5)', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>
             {JSON.stringify(data.parameters, null, 2)}
           </pre>
         )}
@@ -258,7 +258,7 @@ const ToolExecutionCard: React.FC<Props> = ({ card, onAction }) => {
             {showRaw ? t('tool_card_hide_raw_json') : t('tool_card_show_raw_json')}
           </Typography.Link>
           {showRaw && (
-            <pre style={{ fontSize: 11, background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 300, overflow: 'auto' }}>
+            <pre style={{ fontSize: 11, background: 'var(--s-f5f5f5)', padding: 8, borderRadius: 4, maxHeight: 300, overflow: 'auto' }}>
               {JSON.stringify(data.result, null, 2)}
             </pre>
           )}
@@ -272,7 +272,7 @@ const ToolExecutionCard: React.FC<Props> = ({ card, onAction }) => {
             {showRaw ? t('tool_card_hide_result') : t('tool_card_show_result')}
           </Typography.Link>
           {showRaw && (
-            <pre style={{ fontSize: 12, background: '#f5f5f5', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>
+            <pre style={{ fontSize: 12, background: 'var(--s-f5f5f5)', padding: 8, borderRadius: 4, maxHeight: 200, overflow: 'auto' }}>
               {typeof data.result === 'string' ? data.result : JSON.stringify(data.result, null, 2)}
             </pre>
           )}

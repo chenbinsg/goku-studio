@@ -430,6 +430,7 @@
   "agent_edit_tab_basic": "🪪 基本情報",
   "agent_edit_tab_soul": "🧬 カスタム Soul",
   "agent_edit_tab_capability": "⚙️ 機能設定",
+  "agent_edit_tab_board": "📌 ボード設定",
   "agent_edit_tab_notification": "📣 通知と連絡",
   "agent_edit_form_name": "Agent 名",
   "agent_edit_form_base_type": "ベースタイプ",

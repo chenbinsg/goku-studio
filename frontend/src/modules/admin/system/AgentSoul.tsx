@@ -372,7 +372,7 @@ const AgentSoul: React.FC = () => {
               <Space>
                 <span>{t('agent_soul_advanced_title')}</span>
                 <Tooltip title={t('agent_soul_advanced_tooltip')}>
-                  <InfoCircleOutlined style={{ color: '#888' }} />
+                  <InfoCircleOutlined style={{ color: 'var(--t-888888)' }} />
                 </Tooltip>
                 <Switch
                   size="small"
@@ -452,7 +452,7 @@ const AgentSoul: React.FC = () => {
             </Paragraph>
             <pre
               style={{
-                background: '#f5f5f5',
+                background: 'var(--s-f5f5f5)',
                 borderRadius: 6,
                 padding: '12px 16px',
                 fontSize: 12,

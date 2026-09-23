@@ -156,7 +156,7 @@ const NodeWrapper: React.FC<NodeWrapperProps> = ({ color, selected, children, mi
           style={{
             position: 'absolute', top: -7, right: -7,
             width: 14, height: 14, borderRadius: '50%',
-            background: dotColor, border: '2px solid #fff',
+            background: dotColor, border: '2px solid var(--b-ffffff)',
             boxShadow: '0 1px 4px rgba(0,0,0,0.25)', zIndex: 10,
             display: 'flex', alignItems: 'center', justifyContent: 'center',
           }}
@@ -166,7 +166,7 @@ const NodeWrapper: React.FC<NodeWrapperProps> = ({ color, selected, children, mi
       )}
       <div
         style={{
-          padding: '10px 14px', borderRadius: 8, background: '#fff',
+          padding: '10px 14px', borderRadius: 8, background: 'var(--s-ffffff)',
           border: `2px solid ${execStatus === 'running' ? '#1677ff' : selected ? '#ff4d4f' : color}`,
           minWidth,
           boxShadow: selected
@@ -218,7 +218,7 @@ const TaskNode: React.FC<NodeProps> = ({ data, selected }) => (
     </div>
     <Tag color="blue" style={{ fontSize: 10 }}>{(data as NodeData).model || 'default'}</Tag>
     {(data as NodeData).prompt && (
-      <div style={{ fontSize: 11, color: '#888', marginTop: 4, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ fontSize: 11, color: 'var(--t-888888)', marginTop: 4, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {(data as NodeData).prompt as string}
       </div>
     )}
@@ -238,7 +238,7 @@ const ConditionNode: React.FC<NodeProps> = ({ data, selected }) => (
     )}
     <Handle type="source" position={Position.Bottom} id="true"  style={{ left: '30%' }} />
     <Handle type="source" position={Position.Bottom} id="false" style={{ left: '70%' }} />
-    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 10, color: '#888' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 6, fontSize: 10, color: 'var(--t-888888)' }}>
       <span style={{ marginLeft: 4 }}>true</span>
       <span style={{ marginRight: 4 }}>false</span>
     </div>
@@ -254,7 +254,7 @@ const ParallelNode: React.FC<NodeProps> = ({ data, selected }) => (
     </div>
     <Tag color="purple" style={{ fontSize: 10 }}>fork</Tag>
     {(data as NodeData).description && (
-      <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>{(data as NodeData).description as string}</div>
+      <div style={{ fontSize: 11, color: 'var(--t-888888)', marginTop: 4 }}>{(data as NodeData).description as string}</div>
     )}
     <Handle type="source" position={Position.Bottom} />
   </NodeWrapper>
@@ -302,7 +302,7 @@ const HttpRequestNode: React.FC<NodeProps> = ({ data, selected }) => (
     </div>
     <Tag color="cyan" style={{ fontSize: 10 }}>{(data as NodeData).method || 'GET'}</Tag>
     {(data as NodeData).url && (
-      <div style={{ fontSize: 11, color: '#888', marginTop: 4, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ fontSize: 11, color: 'var(--t-888888)', marginTop: 4, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {(data as NodeData).url as string}
       </div>
     )}
@@ -332,7 +332,7 @@ const ToolCallNode: React.FC<NodeProps> = ({ data, selected }) => (
       <span style={{ fontWeight: 600, fontSize: 13 }}>{(data as NodeData).label || 'Tool call'}</span>
     </div>
     {(data as NodeData).tool && (
-      <div style={{ fontSize: 11, color: '#888', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div style={{ fontSize: 11, color: 'var(--t-888888)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {(data as NodeData).tool as string}
       </div>
     )}
@@ -1181,7 +1181,7 @@ const WorkflowDesignerInner: React.FC = () => {
       {/* ── Canvas ──────────────────────────────────────────────────────────── */}
       <div
         ref={reactFlowWrapper}
-        style={{ flex: 1, border: '1px solid #e8e8e8', borderRadius: 8, overflow: 'hidden' }}
+        style={{ flex: 1, border: '1px solid var(--b-e8e8e8)', borderRadius: 8, overflow: 'hidden' }}
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
@@ -1201,7 +1201,7 @@ const WorkflowDesignerInner: React.FC = () => {
           <Controls />
           <MiniMap
             nodeColor={(n) => NODE_COLORS[n.type || 'task'] || '#aaa'}
-            style={{ background: '#fafafa', border: '1px solid #e8e8e8' }}
+            style={{ background: 'var(--s-fafafa)', border: '1px solid var(--b-e8e8e8)' }}
           />
           <Background variant={BackgroundVariant.Dots} gap={12} size={1} color="#d9d9d9" />
 
@@ -1249,7 +1249,7 @@ const WorkflowDesignerInner: React.FC = () => {
                   >
                     <HolderOutlined style={{ color: '#bfbfbf', fontSize: 10, flexShrink: 0 }} />
                     <span style={{ color: item.color, fontSize: 12, flexShrink: 0 }}>{item.icon}</span>
-                    <span style={{ fontSize: 12, color: '#333', flex: 1 }}>{t(item.labelKey)}</span>
+                    <span style={{ fontSize: 12, color: 'var(--t-333333)', flex: 1 }}>{t(item.labelKey)}</span>
                     <Tooltip title={t(item.labelKey)} mouseEnterDelay={0.5}>
                       <Button
                         size="small"

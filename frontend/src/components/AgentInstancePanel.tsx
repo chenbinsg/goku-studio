@@ -250,8 +250,8 @@ const AgentInstancePanel: React.FC<Props> = ({ agentType, agentName, open, onClo
         {isAdmin && status && (
           <div
             style={{
-              background: '#f8faff',
-              border: '1px solid #e8edf5',
+              background: 'var(--s-f8faff)',
+              border: '1px solid var(--b-e8edf5)',
               borderRadius: 10,
               padding: '10px 14px',
               marginBottom: 16,

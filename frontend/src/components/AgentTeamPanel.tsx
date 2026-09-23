@@ -121,7 +121,7 @@ const AgentTeamPanel: React.FC<Props> = ({ taskId, sseEvents = [] }) => {
           <Badge count={agents.length} style={{ backgroundColor: '#722ed1' }} />
         </Space>
       }
-      style={{ marginBottom: 12, borderColor: '#f0f0f0' }}
+      style={{ marginBottom: 12, borderColor: 'var(--b-f0f0f0)' }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
         {agents.map(agent => {

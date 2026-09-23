@@ -272,7 +272,7 @@ const DocumentCenterPage: React.FC = () => {
       {/* ── Toolbar ── */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 12,
-        padding: '12px 0 16px', borderBottom: '1px solid #f0f0f0', marginBottom: 16,
+        padding: '12px 0 16px', borderBottom: '1px solid var(--b-f0f0f0)', marginBottom: 16,
       }}>
         {selectedDoc && (
           <Button
@@ -390,7 +390,7 @@ const DocumentCenterPage: React.FC = () => {
                           {doc.title_zh && <Tag style={{ fontSize: 9, padding: '0 3px', margin: 0 }} color="default">ZH</Tag>}
                           {doc.title_ja && <Tag style={{ fontSize: 9, padding: '0 3px', margin: 0 }} color="default">JA</Tag>}
                         </Space>
-                        <div style={{ marginTop: 6, fontSize: 11, color: '#8c8c8c' }}>
+                        <div style={{ marginTop: 6, fontSize: 11, color: 'var(--t-8c8c8c)' }}>
                           {new Date(doc.updated_at).toLocaleDateString()}
                         </div>
                       </div>

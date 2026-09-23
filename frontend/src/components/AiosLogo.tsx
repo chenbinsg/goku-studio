@@ -61,7 +61,7 @@ const AiosLogo: React.FC<AiosLogoProps> = ({ collapsed = false, size = 36, inlin
         // The artwork carries an opaque white background, so the bar is white too:
         // any leftover space beside the logo blends into it instead of showing the
         // dark sider through side padding.
-        background: '#fff',
+        background: 'var(--s-ffffff)',
         // Same hairline the Header carries, so row y=barH-1 is the identical
         // colour across the whole window instead of the white block ending one
         // pixel lower over the sidebar than over the content area.

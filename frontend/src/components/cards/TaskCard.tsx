@@ -132,12 +132,12 @@ const TaskCard: React.FC<Props> = ({ card, onAction }) => {
                   </Typography.Text>
                 )}
                 {step.parameters && (
-                  <pre style={{ fontSize: 12, background: '#f5f5f5', padding: 8, borderRadius: 4 }}>
+                  <pre style={{ fontSize: 12, background: 'var(--s-f5f5f5)', padding: 8, borderRadius: 4 }}>
                     {JSON.stringify(step.parameters, null, 2)}
                   </pre>
                 )}
                 {step.output != null && (
-                  <pre style={{ fontSize: 12, background: '#f5f5f5', padding: 8, borderRadius: 4 }}>
+                  <pre style={{ fontSize: 12, background: 'var(--s-f5f5f5)', padding: 8, borderRadius: 4 }}>
                     {typeof step.output === 'string' ? step.output : JSON.stringify(step.output, null, 2)}
                   </pre>
                 )}

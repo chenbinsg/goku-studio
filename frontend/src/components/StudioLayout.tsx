@@ -29,6 +29,7 @@ import {
   AppstoreOutlined,
   MessageOutlined,
   FileTextOutlined,
+  LayoutOutlined,
   UserOutlined,
   LogoutOutlined,
   ArrowLeftOutlined,
@@ -139,6 +140,13 @@ export default function StudioLayout() {
       icon: <DatabaseOutlined />,
       label: t('layout_memory_label'),
       onClick: () => navigate('/memory'),
+    },
+    hasPermission('templates.read') && {
+      key: '/display-templates',
+      icon: <LayoutOutlined />,
+      // 显示模板：会议 / 工作流产出在看板和报告里长什么样，由这里的模板决定
+      label: '模板管理',
+      onClick: () => navigate('/display-templates'),
     },
     hasPermission('skills.manage') && {
       key: '/skills',

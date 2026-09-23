@@ -227,7 +227,7 @@ export default function StatefulTransitionAudit() {
           expandedRowKeys: expanded ? [expanded] : [],
           onExpand: (_, row) => setExpanded(expanded === row.id ? null : row.id),
           expandedRowRender: (row) => (
-            <Descriptions size="small" column={2} bordered style={{ background: '#fff' }}>
+            <Descriptions size="small" column={2} bordered style={{ background: 'var(--s-ffffff)' }}>
               <Descriptions.Item label="Entity ID" span={2}>
                 <Text code copyable>{row.entity_id}</Text>
               </Descriptions.Item>

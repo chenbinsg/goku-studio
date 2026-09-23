@@ -28,7 +28,7 @@ const MobileLayout: React.FC = () => {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: '#f5f5f5' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh', background: 'var(--s-f5f5f5)' }}>
       {/* Header */}
       <div style={{
         background: '#1677ff',
@@ -57,8 +57,8 @@ const MobileLayout: React.FC = () => {
         bottom: 0,
         left: 0,
         right: 0,
-        background: '#fff',
-        borderTop: '1px solid #f0f0f0',
+        background: 'var(--s-ffffff)',
+        borderTop: '1px solid var(--b-f0f0f0)',
         display: 'flex',
         zIndex: 100,
         paddingBottom: 'env(safe-area-inset-bottom, 0px)',

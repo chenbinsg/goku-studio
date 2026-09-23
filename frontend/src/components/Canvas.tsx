@@ -26,7 +26,7 @@ const ChartRenderer: React.FC<{ data: any }> = ({ data }) => {
   const datasets: any[] = data?.datasets || []
 
   if (!labels.length || !datasets.length) {
-    return <div style={{ color: '#999' }}>No chart data</div>
+    return <div style={{ color: 'var(--t-999999)' }}>No chart data</div>
   }
 
   const values: number[] = datasets[0]?.data || []

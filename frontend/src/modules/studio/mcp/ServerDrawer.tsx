@@ -213,7 +213,7 @@ const PRESETS: McpPreset[] = [
   { key: 'memory', icon: <BulbOutlined style={{ color: '#722ed1' }} />,
     service_category: 'knowledge_service', connection_type: 'stdio',
     start_command: 'npx -y @modelcontextprotocol/server-memory' },
-  { key: 'github', icon: <GithubOutlined style={{ color: '#24292f' }} />,
+  { key: 'github', icon: <GithubOutlined style={{ color: 'var(--t-24292f)' }} />,
     service_category: 'dev_tools', connection_type: 'stdio',
     start_command: 'npx -y @modelcontextprotocol/server-github',
     needs_connection: true, suggested_type: 'github' },
@@ -253,7 +253,7 @@ const PRESETS: McpPreset[] = [
   // Trade-off vs the preset above: three tools only (list_databases,
   // list_tables, run_select_query — note run_query is named run_select_query
   // here), and list_tables takes `like` rather than page_size/pagination.
-  { key: 'clickhouse-legacy', icon: <DatabaseOutlined style={{ color: '#8c8c8c' }} />,
+  { key: 'clickhouse-legacy', icon: <DatabaseOutlined style={{ color: 'var(--t-8c8c8c)' }} />,
     service_category: 'data_service', connection_type: 'stdio',
     start_command: 'sh -c \'export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$HOME/.local/bin:$PATH"; export CLICKHOUSE_HOST="$DB_HOST" CLICKHOUSE_PORT="$DB_PORT" CLICKHOUSE_USER="$DB_USERNAME" CLICKHOUSE_DATABASE="$DB_NAME" CLICKHOUSE_SECURE=false; export "CLICKHOUSE_PASS""WORD"="$(printenv "DB_PASS""WORD")"; exec uvx --from mcp-clickhouse==0.1.7 --with "mcp<2" mcp-clickhouse\'',
     needs_connection: true, suggested_type: 'database' },
