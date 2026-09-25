@@ -148,6 +148,13 @@ export default function StudioLayout() {
       label: '模板管理',
       onClick: () => navigate('/display-templates'),
     },
+    hasPermission('workbench.read') && {
+      key: '/workbench-tabs',
+      icon: <AppstoreOutlined />,
+      // 与「模板管理」是一对：模板决定产出长什么样，这里决定它落在工作台哪一栏
+      label: '工作台管理',
+      onClick: () => navigate('/workbench-tabs'),
+    },
     hasPermission('skills.manage') && {
       key: '/skills',
       icon: <BulbOutlined />,

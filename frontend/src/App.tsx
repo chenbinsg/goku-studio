@@ -29,6 +29,7 @@ import NotionCallback from './modules/studio/knowledge/NotionCallback'
 import MemoryList from './modules/studio/memory/MemoryList'
 import SkillsPage from './modules/studio/skills/SkillsPage'
 import TemplateList from './modules/studio/display-templates/TemplateList'
+import WorkbenchTabs from './modules/studio/workbench/WorkbenchTabs'
 import PluginList from './modules/studio/plugins/PluginList'
 import ConnectorPage from './modules/studio/connectors/ConnectorPage'
 import DocumentCenterPage from './modules/studio/docs/DocumentCenterPage'
@@ -83,6 +84,7 @@ export default function App() {
             <Route path="memory" element={<MemoryList />} />
             <Route path="skills" element={<SkillsPage />} />
             <Route path="display-templates" element={<TemplateList />} />
+            <Route path="workbench-tabs" element={<WorkbenchTabs />} />
             <Route path="plugins" element={<PluginList />} />
             <Route path="connectors" element={<ConnectorPage />} />
             <Route path="docs" element={<DocumentCenterPage />} />

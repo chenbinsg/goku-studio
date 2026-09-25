@@ -944,7 +944,16 @@ const AgentList: React.FC = () => {
         : null
       // 看板发布：表单里是扁平字段，后端要的是一列 JSON。收完之后把临时字段删掉，
       // 否则它们会作为未知字段发上去（后端忽略，但白噪声会让排查变难）。
-      values.board_publish = toBoardPublish(values)
+      //
+      // undefined = 看板配置那一页从没渲染过（`validateFields` 只返回已注册的字段）。
+      // 这种情况下**整个字段都不提交**，让后端保持原值 —— 提交一份空配置等于
+      // 「谁改了下 Agent 名字，看板发布就被关掉了」。
+      const boardPublish = toBoardPublish(values)
+      if (boardPublish === undefined) delete (values as Record<string, unknown>).board_publish
+      else values.board_publish = boardPublish
+      // 勾了「一并迁移历史记录」就在保存之后迁一次。先读出来 —— 下面那段会把所有
+      // board_publish_* 前缀的字段从提交体里删掉。
+      const migrateRecords = !!values.board_publish_migrate
       Object.keys(values).forEach((k) => {
         if (k.startsWith('board_publish_')) delete (values as Record<string, unknown>)[k]
       })
@@ -953,6 +962,18 @@ const AgentList: React.FC = () => {
         // Fire email config save without blocking the modal close — it's non-critical
         // and was previously causing the save to hang for 30 s when the backend was slow.
         agentApi.updateEmailConfig(editingId, emailConfig).catch(() => {})
+        // 迁移必须在**绑定已经保存之后**：目标由服务端从 Agent 配置里读，
+        // 先迁的话读到的还是旧绑定，记录会被原地搬回去。
+        if (migrateRecords) {
+          try {
+            const moved = await api.post<{ moved: number; to_tab_name: string }>(
+              '/workbench/tabs/migrate', { agent_id: editingId })
+            message.success(`已迁移 ${moved.moved} 份记录至「${moved.to_tab_name}」`)
+          } catch {
+            // 绑定已经改好了，迁移单独失败要说清楚，不能让人以为两件事都成了
+            message.warning('绑定已保存，但历史记录迁移失败，可在「工作台管理」中重试')
+          }
+        }
         message.success(t('agent_list_update_success'))
       } else {
         await agentApi.create(values)
@@ -1919,7 +1940,7 @@ const AgentList: React.FC = () => {
                 label: t('agent_edit_tab_board'),
                 children: (
                   <div style={{ paddingTop: 8, maxWidth: 560 }}>
-                    <BoardPublishFields api={api} />
+                    <BoardPublishFields api={api} agentId={editingId || undefined} />
                   </div>
                 ),
               },
